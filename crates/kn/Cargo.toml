@@ -1,0 +1,17 @@
+[package]
+publish = false
+repository = "https://github.com/soydanil/kn"
+description = "CLI de documentos con sesiones de agentes y Git externo"
+name = "kn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kn-core = { path = "../kn-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+fs2 = "0.4"
