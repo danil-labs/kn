@@ -271,7 +271,11 @@ fn failed_list_call_is_an_error_not_an_empty_page() {
     server.fail_list_call(2);
     let first = remote.list("root", None).unwrap();
     let cursor = first.next_cursor.expect("second page");
-    assert_eq!(code(remote.list("root", Some(&cursor))), "REMOTE_ERROR");
+    // An internal JSON-RPC error has an unknown outcome, never an empty page.
+    assert_eq!(
+        code(remote.list("root", Some(&cursor))),
+        "REMOTE_UNAVAILABLE"
+    );
     assert_eq!(remote.list("root", Some(&cursor)).unwrap().items.len(), 1);
 }
 

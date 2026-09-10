@@ -27,6 +27,8 @@ pub enum OriginKind {
 #[serde(rename_all = "snake_case")]
 pub enum Connection {
     NotConnected,
+    /// An MCP remote is active in the transfer mode; not proof of connectivity.
+    Configured,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -122,13 +124,32 @@ pub fn inspect(path: &Path) -> Result<Inspection> {
         let sha = ws.git.head()?;
         info.version_id = Some(version(&sha));
         info.commit_id = Some(sha);
+        // Reads the transfer mode file only; no refs, network or writes.
+        let mode = crate::remote::config::load_mode(&ws.git.common)?;
+        let active = mode.remote.is_some();
+        info.capabilities = Capabilities {
+            local_versioning: true,
+            sessions: true,
+            cloud_connect: true,
+            pull: active && mode.mode.observes(),
+            push: active && mode.mode.publishes(),
+            remote_refresh: active && mode.mode.observes(),
+        };
         info.origin = Some(Origin {
             kind: OriginKind::Unknown,
             provider: None,
-            connection: Connection::NotConnected,
+            connection: if active {
+                Connection::Configured
+            } else {
+                Connection::NotConnected
+            },
             sharing: Sharing::Unknown,
         });
-        info.message = "Documentos administrados por kn; conexión cloud no configurada y origen no verificado.";
+        info.message = if active {
+            "Documentos administrados por kn con un remoto MCP activo; el origen cloud de la carpeta no se verifica aquí."
+        } else {
+            "Documentos administrados por kn; conexión cloud no configurada y origen no verificado."
+        };
     }
     Ok(info)
 }

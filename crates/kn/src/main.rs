@@ -2,23 +2,25 @@ use clap::{Args, Parser, Subcommand};
 use kn_core::{
     error::{Envelope, Error, Result},
     git::version,
-    ops, sessions,
+    ops,
+    remote::{self, config::Mode, credentials::Keychain},
+    sessions,
     workspace::{self, Workspace},
 };
 use serde_json::{Value, json};
-use std::io::Write;
+use std::{io::Write, path::PathBuf};
 
 #[derive(Parser)]
 #[command(
     version,
-    about = "Versiones y sesiones locales para carpetas de documentos"
+    about = "Versiones, sesiones y remotos para carpetas de documentos"
 )]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
     /// Ejecutar en otra carpeta sin cambiar el directorio del proceso llamador
     #[arg(short = 'C', global = true)]
-    directory: Option<std::path::PathBuf>,
+    directory: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -30,14 +32,14 @@ enum Commands {
     #[command(hide = true)]
     Inspect {
         #[arg(long, default_value = ".")]
-        path: std::path::PathBuf,
+        path: PathBuf,
     },
     /// Inicializar historial externo; no crea .git en la carpeta principal
     Init {
         #[arg(long)]
         fresh: bool,
     },
-    /// Consultar cambios sin modificar documentos
+    /// Consultar cambios sin modificar documentos; --refresh observa antes el remoto
     Status {
         #[arg(long, conflicts_with = "porcelain")]
         refresh: bool,
@@ -46,6 +48,7 @@ enum Commands {
         #[arg(short = 'z', requires = "porcelain")]
         nul: bool,
     },
+    /// Cambios sin guardar; con --remote o --base, versión actual frente al remoto
     Diff {
         #[arg(long)]
         base: bool,
@@ -75,11 +78,32 @@ enum Commands {
         #[command(subcommand)]
         command: Session,
     },
-    Connect {
-        provider: Option<String>,
+    /// Remotos documentales mediante un servidor MCP
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
     },
+    /// Consultar o cambiar quién transfiere los documentos
+    Mode {
+        #[command(subcommand)]
+        command: Option<ModeCommand>,
+    },
+    /// Observar el remoto activo; no cambia los documentos
+    Fetch,
+    /// Incorporar el remoto activo en la sesión actual
     Pull,
-    Push,
+    /// Publicar la versión principal en el remoto activo (modo mcp)
+    Push {
+        /// Mostrar el plan sin escribir en el remoto
+        #[arg(long)]
+        dry_run: bool,
+        /// Permitir que el plan borre documentos remotos
+        #[arg(long)]
+        allow_deletes: bool,
+    },
+    /// Alias de remote add
+    #[command(hide = true)]
+    Connect(RemoteAdd),
     Version,
 }
 #[derive(Subcommand)]
@@ -97,6 +121,60 @@ enum Session {
     /// Integrar la versión guardada a la principal; conservar la sesión
     Finish,
 }
+#[derive(Subcommand)]
+enum RemoteCommand {
+    /// Configurar un servidor MCP y su perfil; no contacta al servidor
+    Add(RemoteAdd),
+    List,
+    /// Configuración y último estado conocido, sin red
+    Show {
+        alias: String,
+    },
+    /// Comprobar herramientas, esquemas y carpeta raíz contra el perfil
+    Verify {
+        alias: String,
+    },
+    /// Autorizar kn ante el servidor y guardar la credencial en el almacén del sistema
+    Login {
+        alias: String,
+    },
+    /// Borrar la credencial guardada
+    Logout {
+        alias: String,
+    },
+    /// Quitar un remoto que no está activo
+    Remove {
+        alias: String,
+    },
+}
+#[derive(Args)]
+struct RemoteAdd {
+    alias: String,
+    /// URL del servidor MCP (https, o http en loopback)
+    endpoint: String,
+    /// Perfil revisado de herramientas (JSON)
+    #[arg(long)]
+    profile: PathBuf,
+    /// Identificador de la carpeta raíz en el proveedor
+    #[arg(long)]
+    root: String,
+    /// Referencia de cuenta, solo informativa
+    #[arg(long)]
+    account: Option<String>,
+}
+#[derive(Subcommand)]
+enum ModeCommand {
+    Show,
+    /// local, desktop_sync, desktop_sync_observed o mcp; no transfiere documentos
+    Set {
+        mode: String,
+        #[arg(long)]
+        remote: Option<String>,
+        /// Declarar que ningún cliente de escritorio sincroniza la principal
+        #[arg(long)]
+        primary_outside_sync: bool,
+    },
+}
 #[derive(Args)]
 #[command(group(clap::ArgGroup::new("query").required(true).multiple(false)
     .args(["is_inside_work_tree", "show_toplevel", "git_dir", "git_common_dir", "revision"])))]
@@ -112,7 +190,7 @@ struct RevParse {
     #[arg(value_parser = ["HEAD"], conflicts_with = "json")]
     revision: Option<String>,
 }
-fn directory(cli: &Cli) -> Result<std::path::PathBuf> {
+fn directory(cli: &Cli) -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     Ok(cli.directory.as_ref().map_or(cwd.clone(), |p| cwd.join(p)))
 }
@@ -152,13 +230,39 @@ fn machine(cli: &Cli) -> Option<Result<Vec<u8>>> {
         _ => None,
     }
 }
+/// Print the URL and try the system browser; the URL alone is enough to continue.
+fn open_browser(url: &str) -> Result<()> {
+    eprintln!("Abre esta dirección para autorizar kn:\n{url}");
+    let mut command = if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    match command.arg(url).status() {
+        Ok(status) if status.success() => (),
+        Ok(_) | Err(_) => eprintln!("No se pudo abrir el navegador; usa la dirección anterior."),
+    }
+    Ok(())
+}
+fn remote_add(ws: &Workspace, cwd: &std::path::Path, args: &RemoteAdd) -> Result<Value> {
+    remote::add(
+        ws,
+        &args.alias,
+        &args.endpoint,
+        &cwd.join(&args.profile),
+        &args.root,
+        args.account.as_deref(),
+    )
+}
 fn execute(cli: &Cli) -> Result<Value> {
-    match &cli.command {
-        Commands::Version => return Ok(json!({"version": env!("CARGO_PKG_VERSION"), "message": concat!("kn ", env!("CARGO_PKG_VERSION"))})),
-        Commands::Connect { .. } | Commands::Pull | Commands::Push
-        | Commands::Status { refresh: true, .. } | Commands::Diff { base: true, .. }
-        | Commands::Diff { remote: true, .. } => return Err(Error::Unsupported("La conexión autenticada y la sincronización en la nube todavía no están implementadas.".into())),
-        _ => (),
+    if let Commands::Version = cli.command {
+        return Ok(
+            json!({"version": env!("CARGO_PKG_VERSION"), "message": concat!("kn ", env!("CARGO_PKG_VERSION"))}),
+        );
     }
     if let Commands::Inspect { path } = &cli.command {
         return Ok(serde_json::to_value(kn_core::inspect::inspect(
@@ -177,8 +281,23 @@ fn execute(cli: &Cli) -> Result<Value> {
     }
     let ws = Workspace::open(&cwd)?;
     match &cli.command {
-        Commands::Status { .. } => ops::status(&ws),
-        Commands::Diff { patch, .. } => ops::diff(&ws, *patch),
+        Commands::Status { refresh, .. } => {
+            if *refresh {
+                remote::fetch(&ws)?;
+            }
+            ops::status(&ws, *refresh)
+        }
+        Commands::Diff {
+            base,
+            remote: against,
+            patch,
+        } => {
+            if *base || *against {
+                remote::diff(&ws, *against, *patch)
+            } else {
+                ops::diff(&ws, *patch)
+            }
+        }
         Commands::History { limit, offset } => ops::history(&ws, *limit, *offset),
         Commands::Snapshot { message } => ops::snapshot(&ws, message),
         Commands::Restore { version } => ops::restore(&ws, version),
@@ -188,7 +307,49 @@ fn execute(cli: &Cli) -> Result<Value> {
             Session::Update => sessions::update(&ws),
             Session::Finish => sessions::finish(&ws),
         },
+        Commands::Remote { command } => match command {
+            RemoteCommand::Add(args) => remote_add(&ws, &cwd, args),
+            RemoteCommand::List => remote::list(&ws),
+            RemoteCommand::Show { alias } => remote::show(&ws, alias),
+            RemoteCommand::Verify { alias } => remote::verify(&ws, alias),
+            RemoteCommand::Login { alias } => remote::login(&ws, alias, &Keychain, &open_browser),
+            RemoteCommand::Logout { alias } => remote::logout(&ws, alias, &Keychain),
+            RemoteCommand::Remove { alias } => remote::remove(&ws, alias, &Keychain),
+        },
+        Commands::Connect(args) => remote_add(&ws, &cwd, args),
+        Commands::Mode { command } => match command {
+            None | Some(ModeCommand::Show) => remote::mode(&ws),
+            Some(ModeCommand::Set {
+                mode,
+                remote: alias,
+                primary_outside_sync,
+            }) => remote::set_mode(
+                &ws,
+                Mode::parse(mode)?,
+                alias.as_deref(),
+                *primary_outside_sync,
+            ),
+        },
+        Commands::Fetch => remote::fetch(&ws),
+        Commands::Pull => remote::pull(&ws),
+        Commands::Push {
+            dry_run,
+            allow_deletes,
+        } => remote::push(&ws, *dry_run, *allow_deletes),
         _ => unreachable!("handled before workspace discovery"),
+    }
+}
+fn list_paths(data: &Value) {
+    for (key, label) in [
+        ("to_publish", "por publicar"),
+        ("to_incorporate", "por incorporar"),
+        ("conflicts", "en conflicto"),
+    ] {
+        for item in data[key].as_array().into_iter().flatten() {
+            if let Some(path) = item.as_str() {
+                println!("{label}  {path:?}");
+            }
+        }
     }
 }
 fn human(data: &Value) {
@@ -240,6 +401,58 @@ fn human(data: &Value) {
         println!(
             "La carpeta contiene un .git del usuario: kn lo conserva; evita sincronizarlo con la nube."
         );
+    }
+    let remote = &data["remote"];
+    if remote.is_object() && remote["remote"].is_string() {
+        println!(
+            "Remoto {} (modo {}): {}. {}",
+            remote["remote"].as_str().unwrap_or(""),
+            remote["mode"].as_str().unwrap_or(""),
+            remote["state"].as_str().unwrap_or(""),
+            remote["message"].as_str().unwrap_or("")
+        );
+        list_paths(remote);
+    }
+    list_paths(data);
+    if let Some(items) = data["plan"].as_array() {
+        for op in items {
+            println!(
+                "{}  {:?}",
+                op["kind"].as_str().unwrap_or(""),
+                op["path"].as_str().unwrap_or("")
+            );
+        }
+    }
+    if let Some(items) = data["capabilities"].as_array() {
+        for c in items {
+            println!(
+                "{}: {}{}",
+                c["operation"].as_str().unwrap_or(""),
+                if c["available"] == true {
+                    "disponible"
+                } else {
+                    "no disponible"
+                },
+                c["reason"]
+                    .as_str()
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default()
+            );
+        }
+    }
+    if let Some(items) = data["remotes"].as_array() {
+        for r in items {
+            println!(
+                "{}  {}{}",
+                r["alias"].as_str().unwrap_or(""),
+                r["endpoint"].as_str().unwrap_or(""),
+                if r["active"] == true {
+                    "  (activo)"
+                } else {
+                    ""
+                }
+            );
+        }
     }
     if let Some(patch) = data["patch"].as_str() {
         print!("{patch}");

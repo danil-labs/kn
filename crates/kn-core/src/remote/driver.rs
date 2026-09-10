@@ -98,7 +98,10 @@ impl Remote {
                 };
                 let actual = by_name.get(spec.tool.as_str()).map(|t| schema_hash(t));
                 let reason = match &actual {
-                    None => Some(format!("El servidor no ofrece la herramienta {}.", spec.tool)),
+                    None => Some(format!(
+                        "El servidor no ofrece la herramienta {}.",
+                        spec.tool
+                    )),
                     Some(hash) if *hash != spec.schema_sha256 => Some(
                         "El esquema de la herramienta cambió; actualiza y prueba el perfil.".into(),
                     ),
@@ -135,7 +138,9 @@ impl Remote {
     }
     pub fn require(&self, op: &str) -> Result<()> {
         let Some(c) = self.capabilities.iter().find(|c| c.operation == op) else {
-            return Err(Error::Unsupported(format!("Operación remota desconocida: {op}.")));
+            return Err(Error::Unsupported(format!(
+                "Operación remota desconocida: {op}."
+            )));
         };
         if c.available {
             return Ok(());
@@ -170,7 +175,9 @@ impl Remote {
             )));
         }
         self.payload(&result).ok_or_else(|| {
-            Error::Remote(format!("La herramienta {tool} no devolvió los datos esperados."))
+            Error::Remote(format!(
+                "La herramienta {tool} no devolvió los datos esperados."
+            ))
         })
     }
     pub fn identify(&mut self, id: &str) -> Result<Item> {
@@ -186,8 +193,10 @@ impl Remote {
         })
     }
     pub fn list(&mut self, folder_id: &str, cursor: Option<&str>) -> Result<Page> {
-        let payload =
-            self.read_call("list", &[("folder_id", Some(folder_id)), ("cursor", cursor)])?;
+        let payload = self.read_call(
+            "list",
+            &[("folder_id", Some(folder_id)), ("cursor", cursor)],
+        )?;
         let spec = &self.profile.operations["list"];
         let items = payload
             .pointer(&spec.result["items"])
@@ -326,5 +335,9 @@ fn missing(op: &str, field: &str) -> Error {
 }
 fn short(text: &str) -> String {
     let t: String = text.chars().take(300).collect();
-    if t.is_empty() { "sin detalle".into() } else { t }
+    if t.is_empty() {
+        "sin detalle".into()
+    } else {
+        t
+    }
 }

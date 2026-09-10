@@ -73,6 +73,26 @@ pub fn list(ws: &Workspace) -> Result<Value> {
 }
 pub fn update(ws: &Workspace) -> Result<Value> {
     ws.require_session()?;
+    prepare_merge(ws)?;
+    merge_into_session(
+        ws,
+        &[
+            "merge",
+            "--no-overwrite-ignore",
+            "--no-edit",
+            "-m",
+            "Actualizar sesión\n\nKn-Reason: session_update",
+            "main",
+        ],
+        "Hay documentos en conflicto dentro de la sesión. Resuélvelos con Git o usa git merge --abort dentro de la sesión; main no cambió.",
+    )?;
+    Ok(
+        json!({"version_id": version(&ws.git.head()?), "message": "La sesión incluye la versión principal."}),
+    )
+}
+/// Preconditions of every integration into a session: saved, safe, no merge in
+/// progress, and main's manual changes observed as the new baseline.
+pub(crate) fn prepare_merge(ws: &Workspace) -> Result<()> {
     require_clean(&ws.git)?;
     ops::check_safe(&ws.git)?;
     if ws.git.dir.join("MERGE_HEAD").exists() {
@@ -80,26 +100,20 @@ pub fn update(ws: &Workspace) -> Result<Value> {
             "Hay una integración pendiente en esta sesión.".into(),
         ));
     }
-    observe_external(&ws.primary()?)?;
-    let out = ws.git.output(&[
-        "merge",
-        "--no-overwrite-ignore",
-        "--no-edit",
-        "-m",
-        "Actualizar sesión\n\nKn-Reason: session_update",
-        "main",
-    ])?;
+    observe_external(&ws.primary()?)
+}
+/// Run a Git merge inside the session; unresolved documents stay there.
+pub(crate) fn merge_into_session(ws: &Workspace, args: &[&str], conflict: &str) -> Result<()> {
+    let out = ws.git.output(args)?;
     if !out.status.success() {
         if ws.git.dir.join("MERGE_HEAD").exists() {
-            return Err(Error::Conflict("Hay documentos en conflicto dentro de la sesión. Resuélvelos con Git o usa git merge --abort dentro de la sesión; main no cambió.".into()));
+            return Err(Error::Conflict(conflict.into()));
         }
         return Err(Error::Git(
             String::from_utf8_lossy(&out.stderr).into_owned(),
         ));
     }
-    Ok(
-        json!({"version_id": version(&ws.git.head()?), "message": "La sesión incluye la versión principal."}),
-    )
+    Ok(())
 }
 pub fn finish(ws: &Workspace) -> Result<Value> {
     ws.require_session()?;

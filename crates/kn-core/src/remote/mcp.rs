@@ -49,7 +49,9 @@ impl Client {
         }
         client.protocol = version.into();
         if result["capabilities"].get("tools").is_none() {
-            return Err(Error::Remote("El servidor no ofrece herramientas MCP.".into()));
+            return Err(Error::Remote(
+                "El servidor no ofrece herramientas MCP.".into(),
+            ));
         }
         client.server = result.get("serverInfo").cloned().unwrap_or(Value::Null);
         client.notify("notifications/initialized")?;
@@ -167,12 +169,22 @@ impl Client {
             message
         };
         if let Some(error) = message.get("error") {
-            return Err(Error::Remote(format!(
-                "El servidor MCP rechazó {method}: {}",
-                error["message"].as_str().unwrap_or("sin detalle")
-            )));
+            let detail = error["message"].as_str().unwrap_or("sin detalle");
+            // Protocol errors mean the request was not executed; any other error can
+            // arrive after the server acted, so its outcome is unknown.
+            return Err(match error["code"].as_i64() {
+                Some(-32700 | -32600 | -32601 | -32602) => {
+                    Error::Remote(format!("El servidor MCP rechazó {method}: {detail}"))
+                }
+                _ => Error::RemoteUnavailable(format!(
+                    "El servidor MCP falló en {method} con resultado desconocido: {detail}"
+                )),
+            });
         }
-        message.get("result").cloned().ok_or_else(|| malformed(method))
+        message
+            .get("result")
+            .cloned()
+            .ok_or_else(|| malformed(method))
     }
     fn notify(&mut self, method: &str) -> Result<()> {
         // 202 Accepted without a body; the response carries nothing to read.

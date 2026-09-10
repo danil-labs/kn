@@ -254,15 +254,23 @@ fn global_git_configuration_is_isolated() {
 #[test]
 fn cloud_capabilities_remain_honest() {
     let f = Fixture::new();
+    f.init();
     for args in [
         vec!["connect", "drive"],
         vec!["push"],
         vec!["pull"],
+        vec!["fetch"],
         vec!["status", "--refresh"],
         vec!["diff", "--base"],
     ] {
         assert_eq!(f.run(&f.main, &args, 3)["status"], "unsupported");
     }
+    let status = f.run(&f.main, &["status"], 0);
+    assert_eq!(status["data"]["capabilities"]["push"], false);
+    assert_eq!(
+        status["data"]["capabilities"]["certified_providers"],
+        serde_json::json!([])
+    );
 }
 #[cfg(unix)]
 #[test]

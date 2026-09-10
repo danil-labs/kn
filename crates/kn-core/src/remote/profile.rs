@@ -99,7 +99,10 @@ pub struct ErrorMapping {
 fn contract(op: &str) -> (&'static [&'static str], &'static [&'static str]) {
     match op {
         "identify" => (&["folder_id"], &["id", "kind"]),
-        "list" => (&["folder_id"], &["items", "item_id", "item_name", "item_kind"]),
+        "list" => (
+            &["folder_id"],
+            &["items", "item_id", "item_name", "item_kind"],
+        ),
         "read" => (&["file_id"], &["content", "revision"]),
         "update" => (&["file_id", "content"], &[]),
         "create" => (&["folder_id", "name", "content"], &[]),
@@ -187,7 +190,8 @@ impl Profile {
     pub fn write_safety(&self, op: &str) -> std::result::Result<(), String> {
         match op {
             "update" | "delete" if !self.uses(op, "expected_revision") => Err(
-                "La herramienta no aplica una condición de revisión; kn no escribe sin ella.".into(),
+                "La herramienta no aplica una condición de revisión; kn no escribe sin ella."
+                    .into(),
             ),
             "create" | "create_folder"
                 if !self.operations.get(op).is_some_and(|s| s.fails_if_exists) =>
@@ -333,7 +337,8 @@ mod tests {
         let a = json!({"name": "x", "description": "one", "inputSchema": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "number"}}}});
         let b = json!({"description": "two", "inputSchema": {"properties": {"b": {"type": "number"}, "a": {"type": "string"}}, "type": "object"}, "name": "x"});
         assert_eq!(schema_hash(&a), schema_hash(&b));
-        let c = json!({"inputSchema": {"type": "object", "properties": {"a": {"type": "integer"}}}});
+        let c =
+            json!({"inputSchema": {"type": "object", "properties": {"a": {"type": "integer"}}}});
         assert_ne!(schema_hash(&a), schema_hash(&c));
     }
     #[test]
@@ -354,7 +359,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            profile.render("list", &[("folder_id", Some("root")), ("cursor", None)]).unwrap(),
+            profile
+                .render("list", &[("folder_id", Some("root")), ("cursor", None)])
+                .unwrap(),
             json!({"folder": "root", "literal": "{not-closed", "opts": {"deep": false}})
         );
         assert!(profile.write_safety("update").is_err());
@@ -374,6 +381,11 @@ mod tests {
             .to_string()
         };
         assert!(Profile::parse(base(json!({"folder": "{folder_id}"})).as_bytes()).is_err());
-        assert!(Profile::parse(base(json!({"folder": "{folder_id}", "c": "{cursor}", "x": "{token}"})).as_bytes()).is_err());
+        assert!(
+            Profile::parse(
+                base(json!({"folder": "{folder_id}", "c": "{cursor}", "x": "{token}"})).as_bytes()
+            )
+            .is_err()
+        );
     }
 }

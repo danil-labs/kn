@@ -1,8 +1,9 @@
 use crate::error::{Error, Result};
 use std::{
     ffi::OsStr,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 /// All engine Git calls cross this boundary. Git owns objects, refs, index and merges.
@@ -69,6 +70,49 @@ impl Git {
     }
     pub fn run_os(&self, args: &[&OsStr]) -> Result<Vec<u8>> {
         checked(self.command()?.args(args).output()?)
+    }
+    /// Same isolated runner with extra variables (such as a temporary index) and stdin.
+    pub fn output_with(
+        &self,
+        args: &[&str],
+        env: &[(&str, String)],
+        input: Option<&[u8]>,
+    ) -> Result<Output> {
+        let mut cmd = self.command()?;
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let Some(input) = input else {
+            return Ok(cmd.output()?);
+        };
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd.spawn()?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Git("Git no aceptó datos de entrada.".into()))?;
+        let data = input.to_vec();
+        let writer = std::thread::spawn(move || stdin.write_all(&data));
+        let out = child.wait_with_output()?;
+        let written = writer
+            .join()
+            .map_err(|_| Error::Git("Falló la escritura hacia Git.".into()))?;
+        // A failed Git reports its own error; a broken pipe is only its consequence.
+        if out.status.success() {
+            written?;
+        }
+        Ok(out)
+    }
+    pub fn run_with(
+        &self,
+        args: &[&str],
+        env: &[(&str, String)],
+        input: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        checked(self.output_with(args, env, input)?)
     }
     pub fn text(&self, args: &[&str]) -> Result<String> {
         String::from_utf8(self.run(args)?)

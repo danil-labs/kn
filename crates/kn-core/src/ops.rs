@@ -112,7 +112,7 @@ pub fn check_safe(git: &Git) -> Result<()> {
     }
     nested(&git.root)
 }
-pub fn status(ws: &Workspace) -> Result<Value> {
+pub fn status(ws: &Workspace, refreshed: bool) -> Result<Value> {
     let local = changes(&ws.git)?;
     let mut unsafe_paths = vec![];
     let mut empty = vec![];
@@ -121,14 +121,19 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         &ws.git
             .run(&["diff", "--name-only", "--diff-filter=U", "-z"])?,
     )?;
+    let remote = crate::remote::summary(ws, refreshed)?;
     Ok(
         json!({"workspace_id": ws.config.workspace_id, "session": ws.config.session,
-        "clean": local.is_empty(), "local_changes": local, "pending_sync": [], "conflicts": conflicts,
+        "clean": local.is_empty(), "local_changes": local,
+        "pending_sync": remote.get("to_publish").cloned().unwrap_or_else(|| json!([])),
+        "conflicts": conflicts,
         "unsafe_paths": unsafe_paths, "unversioned_empty_folders": empty,
         "existing_user_git": ws.config.session.is_none() && ws.git.root.join(".git").exists(),
-        "capabilities": {"local_versioning": true, "sessions": true, "cloud_connect": false,
-            "pull": false, "push": false, "remote_refresh": false},
-        "last_remote_observed": null, "remote_freshness": "unknown", "sync_baseline_id": null,
+        "capabilities": crate::remote::capabilities(&ws.git.common)?,
+        "last_remote_observed": remote["observed_at"].clone(),
+        "remote_freshness": remote["freshness"].clone(),
+        "sync_baseline_id": remote["base_version_id"].clone(),
+        "remote": remote,
         "latest_version_id": version(&ws.git.head()?),
         "message": if ws.config.session.is_some() { "Sesión local; los cambios todavía no se publican." }
             else { "Carpeta compartida. Los cambios manuales se reconocen; abre una sesión para trabajar con agentes." }}),
