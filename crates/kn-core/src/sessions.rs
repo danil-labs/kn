@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    git::{Engine, Git, utf8_path, version},
+    git::{Engine, Git, git_path, version},
     ops,
     workspace::{Config, Workspace, atomic_json, validate_name},
 };
@@ -36,7 +36,7 @@ pub fn start(ws: &Workspace, name: &str) -> Result<Value> {
         "add",
         "-b",
         &format!("sessions/{name}"),
-        utf8_path(&dir)?,
+        &git_path(&dir)?,
         "main",
     ])?;
     atomic_json(
