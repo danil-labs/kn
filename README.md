@@ -21,6 +21,23 @@ kn worktree finish
 
 Los comandos de aplicación aceptan `--json`, incluidos errores de argumentos y ayuda. Las consultas `rev-parse` y los modos `--porcelain` usan salida de texto/bytes y rechazan combinarlos con `--json`. Salidas: 0 éxito, 1 error operativo, 2 conflicto, 3 entrada inválida o capacidad no disponible. `connect`, `push`, `pull`, `status --refresh` y `diff --base/--remote` devuelven capacidad no disponible.
 
+## Probar el flujo de sesiones
+
+Usa primero una carpeta desechable fuera de Drive, con dos archivos de texto. Sigue los comandos del arranque: inicializa la principal y crea una sesión. Abre **la ruta de sesión que devuelve kn** en una terminal, editor o IDE. Si usas un agente, arráncalo con esa carpeta como directorio de trabajo. Crear una sesión en otra herramienta no crea automáticamente un worktree kn: esa herramienta debe invocar kn y usar la ruta devuelta. También puedes ejecutar todo el flujo manualmente desde una terminal.
+
+Comprueba estas etapas antes de usar documentos reales:
+
+1. Edita un archivo dentro de la sesión: el documento de la principal debe seguir igual.
+2. Revisa `kn status` y `kn diff --patch`, y ejecuta `kn commit -m "Propuesta revisada"` desde la sesión: la principal debe seguir igual. Revisa también los archivos nuevos; el patch no muestra su contenido mientras no estén versionados.
+3. Cuando se autorice incorporar la propuesta, ejecuta `kn worktree finish` desde la sesión: ahora la principal recibe los cambios. La sesión se conserva.
+4. Para probar colaboración, crea otra sesión, guarda un cambio suyo y edita manualmente otro archivo en la principal. Ejecuta `kn worktree update` desde la sesión limpia, revisa la integración y luego `kn worktree finish`. Si hay conflictos, resuélvelos en la sesión y guarda el resultado antes de integrar.
+
+Cada sesión usa una rama `sessions/<nombre>` y archivos de trabajo separados; la principal usa `main`. Comparten los objetos y el historial Git local. No es una copia independiente del repositorio ni incluye archivos ignorados o carpetas vacías. Esta separación no es un sandbox: un agente con permisos sobre la principal todavía puede escribir en ella mediante otra ruta. El consumidor debe aplicar los permisos que necesite; véase [seguridad](SECURITY.md).
+
+Después repite con una carpeta desechable sincronizada con Drive, usando archivos descargados y disponibles localmente y manteniendo KN_HOME fuera de cualquier sincronización. Al integrar, el cliente de Drive puede subir los cambios de la principal por su cuenta, archivo por archivo. Esto no equivale a `kn push` ni garantiza una publicación indivisible. Los accesos a documentos nativos de Google no respaldan su contenido mediante este flujo de archivos.
+
+Los colaboradores pueden editar la principal sin usar kn. Compartir esa carpeta por Drive no comparte las ramas ni el historial local, y `.kn/config.json` no autentica a personas o máquinas. El diseño de colaboración cloud pendiente se describe en [la evaluación y propuesta](docs/RUST-AND-COLLABORATION.md). Para integrar kn en otras herramientas y consultar estados, usa el [contrato CLI](docs/CLI.md).
+
 ## Dónde viven los archivos
 
 - Principal: documentos, `.kn/config.json` y lock de inicialización `.kn/kn.lock`, sin un `.git` creado por `kn`.
@@ -45,9 +62,9 @@ cargo test --workspace --locked
 
 Consulta también [arquitectura](ARCHITECTURE.md), [contrato CLI](docs/CLI.md), [invariantes](INVARIANTS.md), [contribución](CONTRIBUTING.md), [seguridad](SECURITY.md), [changelog](CHANGELOG.md) e [instrucciones para agentes](AGENTS.md).
 
-La [revisión de la propuesta](docs/RUST-AND-COLLABORATION.md) explica los cambios respecto al PR Go, el diseño cloud y las incompatibilidades pendientes. No hay importación del historial Go, autenticación, manifiesto compartido implementado, remoto Git administrado, releases automáticos ni garantía transaccional ante cierres a mitad de una operación. No se ha validado aún la integración de Terminus.
+La [revisión de la propuesta](docs/RUST-AND-COLLABORATION.md) explica los cambios respecto al PR Go, el diseño cloud y las incompatibilidades pendientes. No hay importación del historial Go, autenticación, manifiesto compartido implementado, remoto Git administrado, releases automáticos ni garantía transaccional ante cierres a mitad de una operación. La compatibilidad de cada herramienta consumidora debe validarse contra el contrato CLI.
 
-## Consultas para Terminus y otras herramientas
+## Consultas para herramientas
 
 ```sh
 kn -C /ruta/documentos rev-parse --is-inside-work-tree
