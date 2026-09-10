@@ -1,0 +1,16 @@
+[package]
+publish = false
+repository = "https://github.com/soydanil/kn"
+description = "Núcleo local de versiones y worktrees para kn"
+name = "kn-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+thiserror = "2"
+fs2 = "0.4"
