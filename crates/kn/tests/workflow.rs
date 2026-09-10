@@ -483,7 +483,16 @@ fn inspect_is_read_only_even_after_manual_changes_and_a_move() {
                 };
                 out.insert(
                     e.path().strip_prefix(root).unwrap().to_path_buf(),
-                    (bytes, meta.modified().unwrap()),
+                    // Windows may expose delayed directory timestamps from read_dir.
+                    // File bytes, file mtimes and the complete entry set remain exact.
+                    (
+                        bytes,
+                        if meta.is_dir() {
+                            std::time::SystemTime::UNIX_EPOCH
+                        } else {
+                            meta.modified().unwrap()
+                        },
+                    ),
                 );
                 if meta.is_dir() {
                     walk(root, &e.path(), out);

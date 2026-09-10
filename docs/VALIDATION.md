@@ -8,7 +8,7 @@ Evaluación local: 2026-09-10, macOS ARM64, Rust 1.96.0. Alcance: núcleo local 
 | Formato | Aprobado | `cargo fmt --check` |
 | Lints, incluidos tests | Aprobado | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
 | Recorridos y regresiones | 20 pruebas aprobadas en macOS; 2.62 s en la ejecución de referencia | [workflow.rs](../crates/kn/tests/workflow.rs) |
-| CI Linux/macOS/Windows | Configurada; el resultado de cada SHA se consulta en el PR | [workflow](../.github/workflows/ci.yml) |
+| CI Linux/macOS/Windows | Ejecuciones reales y correcciones de portabilidad en PR #3; consultar el resultado del SHA final | [workflow](../.github/workflows/ci.yml) |
 | Documentación de arranque y reglas | Revisada con documentar-para-agentes y root-instructions | [AGENTS.md](../AGENTS.md), [README.md](../README.md) |
 | Restauración y concurrencia | Regresiones de ignorados, Unicode, locks y sesiones divergentes | [invariantes](../INVARIANTS.md) |
 | Sesión antigua contra principal fresh | Rechazada por identidad | `old_sessions_cannot_publish_to_a_reinitialized_primary` |
@@ -20,3 +20,5 @@ Evaluación local: 2026-09-10, macOS ARM64, Rust 1.96.0. Alcance: núcleo local 
 | Distribución con checksums e importación de Go | Pendiente | [issue #2](https://github.com/soydanil/kn/issues/2) |
 
 Los checks del PR son la evidencia remota del commit revisado. No se considera terminada una integración por tener CI configurada. La propuesta Go permanece como referencia histórica y no es el motor de esta entrega.
+
+La CI Windows detectó que las rutas verbatim de Rust necesitan adaptación al proceso Git. También mostró diferencias en fechas de directorios entre enumeraciones; la regresión de solo lectura compara el conjunto de entradas, bytes y fechas de archivos, sin exigir estabilidad de fechas de directorios. Hay una prueba unitaria adicional para rutas Windows de disco y UNC.
