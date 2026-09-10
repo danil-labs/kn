@@ -28,6 +28,20 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("No hay un remoto activo. Configura uno con kn remote add y kn mode set.")]
+    NoRemote,
+    #[error("{0}")]
+    ModeForbids(String),
+    #[error("{0}")]
+    AuthRequired(String),
+    #[error("{0}")]
+    RemoteUnavailable(String),
+    #[error("{0}")]
+    Remote(String),
+    #[error("{0}")]
+    RemoteIncomplete(String),
+    #[error("{0}")]
+    ProfileMismatch(String),
 }
 impl Error {
     pub fn code(&self) -> &'static str {
@@ -44,14 +58,32 @@ impl Error {
             Self::Git(_) => "GIT_FAILED",
             Self::Io(_) => "IO_ERROR",
             Self::Json(_) => "INVALID_STATE",
+            Self::NoRemote => "REMOTE_NOT_CONFIGURED",
+            Self::ModeForbids(_) => "MODE_FORBIDS_OPERATION",
+            Self::AuthRequired(_) => "AUTH_REQUIRED",
+            Self::RemoteUnavailable(_) => "REMOTE_UNAVAILABLE",
+            Self::Remote(_) => "REMOTE_ERROR",
+            Self::RemoteIncomplete(_) => "REMOTE_INCOMPLETE",
+            Self::ProfileMismatch(_) => "PROFILE_MISMATCH",
         }
     }
     pub fn exit(&self) -> i32 {
         match self {
             Self::Conflict(_) => 2,
-            Self::Invalid(_) | Self::Unsupported(_) | Self::SessionRequired => 3,
+            Self::Invalid(_)
+            | Self::Unsupported(_)
+            | Self::SessionRequired
+            | Self::NoRemote
+            | Self::ModeForbids(_)
+            | Self::ProfileMismatch(_) => 3,
             _ => 1,
         }
+    }
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Busy | Self::RemoteUnavailable(_) | Self::RemoteIncomplete(_)
+        )
     }
 }
 pub type Result<T> = std::result::Result<T, Error>;
@@ -85,11 +117,18 @@ impl Envelope {
                 };
                 e.errors.push(
                     serde_json::json!({"code": err.code(), "message": err.to_string(),
-                    "retryable": matches!(err, Error::Busy),
+                    "retryable": err.retryable(),
                     "suggested_next_action": match err {
                         Error::Busy => "Vuelve a intentar cuando termine la otra operación.",
                         Error::Copied => "Ejecuta kn init --fresh en la copia.",
                         Error::SessionRequired => "Ejecuta kn session start <nombre>.",
+                        Error::NoRemote => "Ejecuta kn remote add y kn mode set <modo> --remote <alias>.",
+                        Error::ModeForbids(_) => "Revisa kn mode; cambiar de modo no transfiere documentos.",
+                        Error::AuthRequired(_) => "Ejecuta kn remote login <alias> o entrega KN_MCP_ACCESS_TOKEN en el entorno.",
+                        Error::RemoteUnavailable(_) => "Vuelve a intentar; nada se marcó como publicado sin verificarlo.",
+                        Error::RemoteIncomplete(_) => "Vuelve a observar con kn fetch; no se infirieron borrados.",
+                        Error::ProfileMismatch(_) => "Actualiza y prueba el perfil del servidor antes de usar esa operación.",
+                        Error::Conflict(_) => "Revisa kn status; los conflictos se resuelven dentro de una sesión.",
                         _ => "Consulta kn --help y kn status antes de volver a intentar.",
                     }}),
                 );

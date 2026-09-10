@@ -15,3 +15,5 @@ serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 fs2 = "0.4"
+tiny_http = "0.12"
+base64 = "0.22"

@@ -14,3 +14,8 @@ uuid.workspace = true
 tempfile.workspace = true
 thiserror = "2"
 fs2 = "0.4"
+ureq = "3"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "linux-native"] }

@@ -4,5 +4,6 @@ pub mod git;
 pub mod inspect;
 pub mod ops;
 pub mod plumbing;
+pub mod remote;
 pub mod sessions;
 pub mod workspace;
