@@ -1,0 +1,55 @@
+{
+  "profile_version": 1,
+  "name": "kn-reference",
+  "description": "Servidor de referencia de las pruebas de kn. No representa a ningún proveedor real.",
+  "result_source": "structured",
+  "content_encoding": "base64",
+  "operations": {
+    "identify": {
+      "tool": "get_item",
+      "schema_sha256": "b17f97733bf874332da1f92acb1d523c92c073c8400947cbdc87fca277acfa51",
+      "arguments": {"item_id": "{folder_id}"},
+      "result": {"id": "/id", "name": "/name", "kind": "/type"}
+    },
+    "list": {
+      "tool": "list_children",
+      "schema_sha256": "a6ed26adbcc68602daa369b2430aff69bb2f17efc9c0a89eb9a320b4de163e2e",
+      "arguments": {"folder_id": "{folder_id}", "cursor": "{cursor}"},
+      "result": {"items": "/items", "next_cursor": "/next_cursor", "item_id": "/id", "item_name": "/name", "item_kind": "/type", "item_revision": "/revision"}
+    },
+    "read": {
+      "tool": "read_file",
+      "schema_sha256": "15c8e196d4f9d6ae4374f40cadcfb1a3862e309e1d3f8c6e385263827756ed47",
+      "arguments": {"file_id": "{file_id}"},
+      "result": {"content": "/content_base64", "revision": "/revision"}
+    },
+    "update": {
+      "tool": "update_file",
+      "schema_sha256": "ee7ddf7c32aa0f572a3fa33f60958b8fe3b6e1a7bc07e989c546eefa115d503d",
+      "arguments": {"file_id": "{file_id}", "content_base64": "{content}", "if_revision": "{expected_revision}"},
+      "result": {"id": "/id", "revision": "/revision"}
+    },
+    "create": {
+      "tool": "create_file",
+      "schema_sha256": "501a6441aebbfe804bc5b98eb0969d8fb1191fe1d02213cbe3dd5b557f0117cd",
+      "arguments": {"folder_id": "{folder_id}", "name": "{name}", "content_base64": "{content}"},
+      "result": {"id": "/id", "revision": "/revision"},
+      "fails_if_exists": true
+    },
+    "create_folder": {
+      "tool": "create_folder",
+      "schema_sha256": "c00e52181fa50df450d244891b1cb45c0931c932eab9be5e0880c4fb603c1adf",
+      "arguments": {"folder_id": "{folder_id}", "name": "{name}"},
+      "result": {"id": "/id"},
+      "fails_if_exists": true
+    },
+    "delete": {
+      "tool": "delete_file",
+      "schema_sha256": "098450d4f477ff8520afcf84a3e6f9774bea33a893037af4194136f633855e0a",
+      "arguments": {"file_id": "{file_id}", "if_revision": "{expected_revision}"},
+      "result": {}
+    }
+  },
+  "kinds": {"file": ["file"], "folder": ["folder"], "remote_only": ["native"]},
+  "errors": {"pointer": "/code", "precondition_failed": ["precondition_failed"], "already_exists": ["already_exists"], "not_found": ["not_found"]}
+}
