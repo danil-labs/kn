@@ -49,6 +49,8 @@ Cambios explícitos frente al contrato del issue:
 
 ## Diseño propuesto: carpeta compartida y autenticación
 
+Revisión propuesta del 2026-09-10: [remotos mediante MCP](MCP-REMOTES.md). El usuario solicita evitar registros OAuth propios y ejecutar el acceso remoto desde código; el documento nuevo propone un cliente MCP con perfiles de herramientas. La autorización directa descrita abajo permanece como antecedente de diseño; la nueva vía sigue pendiente de revisión y validación de servidores.
+
 Separar identidad compartida, clon local, persona y autorización:
 
 | Dato | Ubicación propuesta | Significado |
@@ -82,4 +84,4 @@ Siguiente entrega: implementar identidad personal/local separada del espacio par
 
 La evidencia vigente de verificación local y remota se registra en [VALIDATION.md](VALIDATION.md). CI configurada para Linux/macOS/Windows. No se midieron proveedores cloud, cortes de energía, fallos de disco ni compatibilidad binaria con Terminus.
 
-La interfaz de consulta para consumidores usa los nombres `rev-parse`, `status --porcelain` y `worktree list --porcelain`, implementados en [plumbing.rs](../crates/kn-core/src/plumbing.rs). El [README](../README.md#consultas-para-terminus-y-otras-herramientas) define las opciones admitidas, el formato de salida y las diferencias de semántica con Git. La consulta `inspect` queda experimental y oculta; Terminus sigue siendo responsable de clasificar carpetas ajenas a kn. `commit`/`log`/`worktree add` conservan los nombres anteriores como alias.
+La interfaz de consulta para consumidores usa los nombres `rev-parse`, `status --porcelain` y `worktree list --porcelain`, implementados en [plumbing.rs](../crates/kn-core/src/plumbing.rs). El [README](../README.md#consultas-para-herramientas) define las opciones admitidas, el formato de salida y las diferencias de semántica con Git. La consulta `inspect` queda experimental y oculta; Terminus sigue siendo responsable de clasificar carpetas ajenas a kn. `commit`/`log`/`worktree add` conservan los nombres anteriores como alias.

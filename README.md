@@ -64,6 +64,8 @@ Consulta también [arquitectura](ARCHITECTURE.md), [contrato CLI](docs/CLI.md), 
 
 La [revisión de la propuesta](docs/RUST-AND-COLLABORATION.md) explica los cambios respecto al PR Go, el diseño cloud y las incompatibilidades pendientes. No hay importación del historial Go, autenticación, manifiesto compartido implementado, remoto Git administrado, releases automáticos ni garantía transaccional ante cierres a mitad de una operación. La compatibilidad de cada herramienta consumidora debe validarse contra el contrato CLI.
 
+La [propuesta de remotos mediante MCP](docs/MCP-REMOTES.md) describe acceso cloud desde código, sin agentes, con servidores autorizados por el usuario. Está en revisión; no habilita comandos cloud en el binario actual.
+
 ## Consultas para herramientas
 
 ```sh
