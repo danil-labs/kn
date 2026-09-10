@@ -1,6 +1,6 @@
 # kn
 
-CLI en Rust para trabajar con agentes sobre carpetas de documentos compartidas. Las personas pueden agregar, editar o borrar documentos con sus aplicaciones habituales; los agentes trabajan en sesiones separadas con historial Git. Implementación local experimental, sin proveedores cloud todavía.
+CLI en Rust para trabajar con agentes sobre carpetas de documentos compartidas. Las personas pueden agregar, editar o borrar documentos con sus aplicaciones habituales; los agentes trabajan en sesiones separadas con historial Git. Implementación experimental: el núcleo local y los remotos cloud mediante MCP funcionan, pero todavía no hay ningún proveedor certificado.
 
 ```sh
 cargo install --path crates/kn --locked
@@ -19,7 +19,7 @@ kn worktree finish
 
 `kn log --limit 20 --offset 0` lista versiones. `kn restore v_<12-hex>` restaura dentro de una sesión, guarda antes los cambios pendientes y crea una versión solo si hay cambios. No modifica la principal ni envía nada a la nube. `kn worktree list` muestra las sesiones conservadas.
 
-Los comandos de aplicación aceptan `--json`, incluidos errores de argumentos y ayuda. Las consultas `rev-parse` y los modos `--porcelain` usan salida de texto/bytes y rechazan combinarlos con `--json`. Salidas: 0 éxito, 1 error operativo, 2 conflicto, 3 entrada inválida o capacidad no disponible. `connect`, `push`, `pull`, `status --refresh` y `diff --base/--remote` devuelven capacidad no disponible.
+Los comandos de aplicación aceptan `--json`, incluidos errores de argumentos y ayuda. Las consultas `rev-parse` y los modos `--porcelain` usan salida de texto/bytes y rechazan combinarlos con `--json`. Salidas: 0 éxito, 1 error operativo, 2 conflicto, 3 entrada inválida o capacidad no disponible. Los comandos cloud (`fetch`, `pull`, `push`, `status --refresh`, `diff --base/--remote`) no contactan servidores mientras no elijas un modo de transferencia con `kn mode set`; consulta [remotos cloud](#remotos-cloud-mediante-mcp).
 
 ## Probar el flujo de sesiones
 
@@ -36,7 +36,7 @@ Cada sesión usa una rama `sessions/<nombre>` y archivos de trabajo separados; l
 
 Después repite con una carpeta desechable sincronizada con Drive, usando archivos descargados y disponibles localmente y manteniendo KN_HOME fuera de cualquier sincronización. Al integrar, el cliente de Drive puede subir los cambios de la principal por su cuenta, archivo por archivo. Esto no equivale a `kn push` ni garantiza una publicación indivisible. Los accesos a documentos nativos de Google no respaldan su contenido mediante este flujo de archivos.
 
-Los colaboradores pueden editar la principal sin usar kn. Compartir esa carpeta por Drive no comparte las ramas ni el historial local, y `.kn/config.json` no autentica a personas o máquinas. El diseño de colaboración cloud pendiente se describe en [la evaluación y propuesta](docs/RUST-AND-COLLABORATION.md). Para integrar kn en otras herramientas y consultar estados, usa el [contrato CLI](docs/CLI.md).
+Los colaboradores pueden editar la principal sin usar kn. Compartir esa carpeta por Drive no comparte las ramas ni el historial local, y `.kn/config.json` no autentica a personas o máquinas. Los remotos cloud se describen en [remotos mediante MCP](docs/MCP-REMOTES.md). Para integrar kn en otras herramientas y consultar estados, usa el [contrato CLI](docs/CLI.md).
 
 ## Dónde viven los archivos
 
@@ -62,9 +62,32 @@ cargo test --workspace --locked
 
 Consulta también [arquitectura](ARCHITECTURE.md), [contrato CLI](docs/CLI.md), [invariantes](INVARIANTS.md), [contribución](CONTRIBUTING.md), [seguridad](SECURITY.md), [changelog](CHANGELOG.md) e [instrucciones para agentes](AGENTS.md).
 
-La [revisión de la propuesta](docs/RUST-AND-COLLABORATION.md) explica los cambios respecto al PR Go, el diseño cloud y las incompatibilidades pendientes. No hay importación del historial Go, autenticación, manifiesto compartido implementado, remoto Git administrado, releases automáticos ni garantía transaccional ante cierres a mitad de una operación. La compatibilidad de cada herramienta consumidora debe validarse contra el contrato CLI.
+La [revisión de la propuesta](docs/RUST-AND-COLLABORATION.md) explica los cambios respecto al PR Go, el diseño cloud y las incompatibilidades pendientes. No hay importación del historial Go, manifiesto compartido, remoto Git administrado, releases automáticos ni garantía transaccional ante cierres a mitad de una operación. La compatibilidad de cada herramienta consumidora debe validarse contra el contrato CLI.
 
-La [propuesta de remotos mediante MCP](docs/MCP-REMOTES.md) describe acceso cloud desde código, sin agentes, con servidores autorizados por el usuario. Está en revisión; no habilita comandos cloud en el binario actual.
+## Remotos cloud mediante MCP
+
+kn se conecta como cliente a un servidor MCP que ya tiene acceso autorizado a Drive, OneDrive o SharePoint. No interviene ningún agente, y no hace falta registrar aplicaciones propias ante Google o Microsoft. Cada servidor necesita un [perfil revisado](docs/MCP-PROFILES.md). **Todavía no hay ningún proveedor certificado**; el [perfil de referencia](docs/profiles/reference.json) es el del servidor de pruebas.
+
+```sh
+kn remote add drive https://mcp.ejemplo.com/mcp --profile perfil.json --root <id-de-carpeta>
+kn remote login drive     # OAuth en el navegador; una aplicación integradora puede entregar KN_MCP_ACCESS_TOKEN
+kn remote verify drive    # herramientas, esquemas y carpeta raíz; no escribe
+# Si un cliente de escritorio ya sincroniza la carpeta, kn solo observa:
+kn mode set desktop_sync_observed --remote drive
+# Si kn debe publicar, la principal va fuera de cualquier sincronización:
+kn mode set mcp --remote drive --primary-outside-sync
+kn status --refresh       # synced, local_ahead, remote_ahead, diverged, conflicted o unknown
+```
+
+Para incorporar el remoto:
+
+1. Abre una sesión y ejecuta `kn pull` dentro de ella.
+2. Resuelve los conflictos, si los hay.
+3. Ejecuta `kn worktree finish`.
+
+Para publicar la principal, revisa el plan con `kn push --dry-run` y luego ejecuta `kn push`. Los borrados remotos requieren `--allow-deletes`.
+
+`fetch` y `status` nunca cambian documentos. `push` escribe solo con precondiciones de revisión y marca como publicado únicamente lo que muestra una observación posterior. El diseño, los modos y los límites están en [remotos mediante MCP](docs/MCP-REMOTES.md).
 
 ## Consultas para herramientas
 

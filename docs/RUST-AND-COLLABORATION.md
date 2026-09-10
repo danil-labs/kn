@@ -49,7 +49,7 @@ Cambios explícitos frente al contrato del issue:
 
 ## Diseño propuesto: carpeta compartida y autenticación
 
-Revisión propuesta del 2026-09-10: [remotos mediante MCP](MCP-REMOTES.md). El usuario solicita evitar registros OAuth propios y ejecutar el acceso remoto desde código; el documento nuevo propone un cliente MCP con perfiles de herramientas. La autorización directa descrita abajo permanece como antecedente de diseño; la nueva vía sigue pendiente de revisión y validación de servidores.
+Implementación del 2026-09-10: [remotos mediante MCP](MCP-REMOTES.md). kn accede a la nube como cliente de un servidor MCP con perfiles de herramientas, sin registros OAuth propios ante Google o Microsoft. La autorización directa descrita abajo queda como antecedente y no está implementada. Ningún proveedor está certificado: falta seleccionar servidores y validarlos con cuentas reales.
 
 Separar identidad compartida, clon local, persona y autorización:
 

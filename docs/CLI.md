@@ -7,8 +7,8 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | Comando | Resultado |
 | --- | --- |
 | `init [--fresh]` | Inicializa; fresh asigna otra identidad, no convierte el historial anterior |
-| `status [--refresh]` | Cambios, conflictos, capacidades; refresh no disponible |
-| `diff [--patch] [--base\|--remote]` | Cambios desde HEAD; base/remote no disponibles |
+| `status [--refresh]` | Cambios, conflictos, capacidades y estado remoto almacenado; refresh observa antes el remoto activo |
+| `diff [--patch] [--base\|--remote]` | Cambios desde HEAD; con base/remote, versión actual frente a la base reconciliada o la última observación remota |
 | `commit [-m mensaje]` | Guarda todos los documentos permitidos de la sesión; alias snapshot |
 | `log [--limit N] [--offset N]` | Versiones documentales, limit 1–1000, offset desde cero; alias history |
 | `restore v_<12 hex>` | Guarda antes los cambios y restaura dentro de la sesión |
@@ -16,7 +16,15 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | `worktree list` | Lista sesiones conservadas; con porcelain incluye principal y registros Git |
 | `worktree update` | Integra la principal en la sesión actual |
 | `worktree finish` | Integra la sesión a la principal si puede avanzar fast-forward |
-| `connect [proveedor]`, `pull`, `push` | Capacidad no disponible; no solicitan ni usan tokens |
+| `remote add <alias> <url> --profile <archivo> --root <id> [--account <ref>]` | Guarda el remoto y una copia del perfil bajo KN_HOME; no contacta al servidor. `connect` es alias oculto |
+| `remote list`, `remote show <alias>` | Remotos configurados; configuración y último estado conocido, sin red |
+| `remote verify <alias>` | Conecta, compara herramientas y esquemas con el perfil y comprueba la raíz; nunca escribe |
+| `remote login <alias>`, `remote logout <alias>` | Autoriza kn ante el servidor y guarda la credencial en el almacén del sistema; la borra |
+| `remote remove <alias>` | Quita un remoto inactivo sin publicaciones pendientes |
+| `mode`, `mode set <modo> [--remote <alias>] [--primary-outside-sync]` | Consulta o cambia quién transfiere: `local`, `desktop_sync`, `desktop_sync_observed`, `mcp`; nunca transfiere documentos |
+| `fetch` | Observa completo el remoto activo; no cambia los documentos de la principal |
+| `pull` | En una sesión: observa e integra el remoto con Git; los conflictos quedan en la sesión |
+| `push [--dry-run] [--allow-deletes]` | Solo en modo `mcp`: publica el commit actual de main con precondiciones y lo verifica |
 | `version`, `--version` | Versión del build |
 
 `-C <carpeta>` fija el directorio de ejecución; se admite una sola ocurrencia. No cambia el cwd del consumidor. `--help` funciona por comando. El nombre de sesión acepta 1–64 letras ASCII, números, guiones y guiones bajos; no recibe una ruta arbitraria.
@@ -56,7 +64,7 @@ Los comandos de aplicación aceptan `--json`. Un único objeto se escribe a stdo
 }
 ```
 
-[JSON Schema del envelope](schema/envelope-v1.json). `data` depende del comando y todavía no tiene un esquema publicado por operación. El mensaje humano es explicativo y no debe parsearse. En errores, data es null; cada error contiene `code`, `message`, `retryable` y `suggested_next_action`. Solo WORKSPACE_BUSY se marca retryable actualmente.
+[JSON Schema del envelope](schema/envelope-v1.json). `data` depende del comando y todavía no tiene un esquema publicado por operación. El mensaje humano es explicativo y no debe parsearse. En errores, data es null; cada error contiene `code`, `message`, `retryable` y `suggested_next_action`. Se marcan retryable WORKSPACE_BUSY, REMOTE_UNAVAILABLE y REMOTE_INCOMPLETE.
 
 | Exit | status | Interpretación |
 | --- | --- | --- |
@@ -81,9 +89,44 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 | GIT_FAILED | Falló el proceso Git |
 | IO_ERROR | Falló filesystem/proceso |
 | INVALID_STATE | Estado JSON no se puede deserializar |
+| REMOTE_NOT_CONFIGURED | El modo no nombra un remoto activo (exit 3) |
+| MODE_FORBIDS_OPERATION | El modo de transferencia no permite la operación; se rechaza antes de contactar al servidor (exit 3) |
+| AUTH_REQUIRED | El servidor exige autorización o rechazó la credencial |
+| REMOTE_UNAVAILABLE | Red, HTTP 5xx, sesión expirada o respuesta perdida: resultado desconocido, se verifica observando |
+| REMOTE_ERROR | El servidor respondió un error o datos que no cumplen el perfil |
+| REMOTE_INCOMPLETE | La observación no fue completa o la verificación no mostró la publicación; no se infieren borrados |
+| PROFILE_MISMATCH | El esquema de una herramienta cambió respecto al perfil (exit 3) |
+
+## Remotos MCP
+
+Diseño y límites: [remotos mediante MCP](MCP-REMOTES.md). Formato de perfil: [perfiles](MCP-PROFILES.md). Ningún proveedor está certificado en este build.
+
+`status --json` agrega `data.remote` ([JSON Schema](schema/remote-status-v1.json)) y lo calcula sin red, desde la última observación guardada:
+
+- `freshness`: `stored` para el estado guardado, `refreshed` con `--refresh`, `unknown` sin observación.
+- `state`: `not_configured`, `synced`, `local_ahead`, `remote_ahead`, `diverged`, `conflicted` o `unknown`, con `reason` cuando es `unknown`.
+- `to_publish`, `to_incorporate`, `conflicts`: rutas.
+- `base_version_id`, `local_version_id`, `observed_version_id`: identificadores de B, L y R.
+- `observed_at`, `age_seconds`, `last_attempt`: antigüedad y completitud de la observación.
+- `unmanaged_remote`: elementos remotos que kn no administra.
+- `uncommitted_local_changes`: cambios sin guardar de la principal.
+- `open_publications`: publicaciones sin verificar.
+- `publisher`: `none`, `desktop_client` o `kn`.
+
+Los campos anteriores de `status` se conservan:
+
+- `pending_sync` es `to_publish`.
+- `last_remote_observed`, `remote_freshness` y `sync_baseline_id` repiten los datos de `remote`.
+- `capabilities` indica qué permite el modo actual con su remoto. No indica permisos. `certified_providers` sigue vacío.
+
+`status --porcelain` no incluye campos remotos: sigue siendo el estado Git local.
+
+Los datos de `fetch` y `push` usan los mismos nombres de estado y rutas. `push --dry-run` devuelve `plan`: operaciones `create_folder`, `create`, `update` o `delete` con su ruta, más `requires_allow_deletes`. `push` devuelve el diario verificado con `published`, `operation_id` y `base_version_id`. `diff --remote` usa `git diff R HEAD`: `added` existe localmente y no en el remoto.
+
+Credenciales: una aplicación integradora entrega el token del servidor MCP en `KN_MCP_ACCESS_TOKEN`. Sin esa variable, kn usa la credencial que guardó `kn remote login` en el almacén del sistema y la renueva si está por vencer. Nunca las recibe en argumentos ni archivos. `remote login` imprime la URL de autorización en stderr e intenta abrir el navegador.
 
 ## Estado de integración
 
-`inspect --path <ruta> --json` es experimental y permanece oculto en la ayuda general. Puede devolver `managed=false`, o identificar documentos y su principal; su origen cloud y sharing son desconocidos. No es un clasificador universal ni sustituye las consultas anteriores. `workspace_id` identifica el historial local, no una cuenta, una persona ni un espacio cloud compartido.
+`inspect --path <ruta> --json` es experimental y permanece oculto en la ayuda general. Puede devolver `managed=false`, o identificar documentos y su principal; su origen cloud y sharing son desconocidos. `origin.connection` vale `configured` cuando el modo tiene un remoto activo; eso no prueba conectividad. No es un clasificador universal ni sustituye las consultas anteriores. `workspace_id` identifica el historial local, no una cuenta, una persona ni un espacio cloud compartido.
 
 Una aplicación puede consultar kn como proceso; `kn-core` también es una biblioteca Rust, sin estabilidad ABI prometida. Los aliases, envelope y formatos tienen regresiones en [workflow.rs](../crates/kn/tests/workflow.rs). Cada consumidor debe validar su integración contra este build. No inferir integración terminada, permisos cloud o sincronización a partir de un icono.

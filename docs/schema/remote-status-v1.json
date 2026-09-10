@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kn status data.remote 1.0",
+  "description": "Remote section of `kn status --json`. Stored state unless freshness is refreshed; never proof of the current remote state.",
+  "type": "object",
+  "required": ["mode", "remote", "state", "publisher", "freshness", "message"],
+  "additionalProperties": false,
+  "$defs": {
+    "version": { "type": ["string", "null"], "pattern": "^v_[0-9a-f]{12}$" },
+    "paths": { "type": "array", "items": { "type": "string" } }
+  },
+  "properties": {
+    "mode": { "enum": ["local", "desktop_sync", "desktop_sync_observed", "mcp"] },
+    "remote": { "type": ["string", "null"] },
+    "endpoint": { "type": "string" },
+    "profile": { "type": "string" },
+    "publisher": { "enum": ["none", "desktop_client", "kn"] },
+    "state": {
+      "enum": ["not_configured", "synced", "local_ahead", "remote_ahead", "diverged", "conflicted", "unknown"]
+    },
+    "reason": { "type": ["string", "null"] },
+    "to_publish": { "$ref": "#/$defs/paths" },
+    "to_incorporate": { "$ref": "#/$defs/paths" },
+    "conflicts": { "$ref": "#/$defs/paths" },
+    "base_version_id": { "$ref": "#/$defs/version" },
+    "local_version_id": { "$ref": "#/$defs/version" },
+    "observed_version_id": { "$ref": "#/$defs/version" },
+    "observed_at": { "type": ["string", "null"], "format": "date-time" },
+    "age_seconds": { "type": ["integer", "null"], "minimum": 0 },
+    "freshness": { "enum": ["unknown", "stored", "refreshed"] },
+    "last_attempt": {
+      "type": ["object", "null"],
+      "required": ["at", "complete", "issues"],
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "complete": { "type": "boolean" },
+        "issues": { "$ref": "#/$defs/paths" }
+      }
+    },
+    "unmanaged_remote": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "id", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "id": { "type": "string" },
+          "reason": { "enum": ["remote_only", "ignored_locally", "unrepresentable_name", "reserved_name"] }
+        }
+      }
+    },
+    "uncommitted_local_changes": { "type": ["integer", "null"], "minimum": 0 },
+    "open_publications": { "type": "integer", "minimum": 0 },
+    "message": { "type": "string" }
+  }
+}

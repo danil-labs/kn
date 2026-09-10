@@ -1,6 +1,6 @@
 # Seguridad y conservación de documentos
 
-kn es experimental. Guarda y restaura documentos mediante Git, pero no es un sandbox para agentes ni un sistema de respaldo completo. La versión actual no tiene OAuth, almacenamiento de tokens ni adaptadores cloud.
+kn es experimental. Guarda y restaura documentos mediante Git, pero no es un sandbox para agentes ni un sistema de respaldo completo. Incluye un cliente MCP con autorización OAuth (PKCE) y credenciales en el almacén del sistema. No incluye adaptadores directos de proveedores ni proveedores certificados.
 
 ## Alcance
 
@@ -11,6 +11,10 @@ kn es experimental. Guarda y restaura documentos mediante Git, pero no es un san
 - Los objetos Git y gitfiles no se suben a carpetas sincronizadas. No hay detección universal de directorios cloud ni prueba de que un proveedor esté sincronizado.
 - Los commits locales atribuyen la observación a kn; no prueban identidad de personas o dispositivos.
 - Los archivos y metadatos malformados deben producir un error, no disparar comandos desde su contenido. No hay garantía contra cambios de symlink entre la comprobación y el uso.
+- Los tokens de servidores MCP viven en el almacén seguro del sistema o llegan en `KN_MCP_ACCESS_TOKEN`. Nunca van en KN_HOME, documentos, argumentos, diarios ni mensajes de error. En Linux se usa el keyring del kernel, que no persiste tras reiniciar.
+- kn solo envía el token al endpoint configurado (https, o http en loopback) y no sigue redirecciones. La metadata de autorización debe declarar el mismo recurso y soportar S256.
+- El operador del servidor MCP recibe acceso a los documentos: autorizarlo es decisión de la persona. El perfil es un dato que kn copia al configurarlo; nada de una carpeta compartida se ejecuta.
+- Las escrituras remotas exigen precondición de revisión o creación exclusiva según el perfil. Un perfil que declara garantías que el servidor no cumple anula esa protección; por eso cada servidor se prueba antes de certificarlo.
 
 ## Reportar un problema
 
