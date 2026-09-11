@@ -17,7 +17,8 @@ Requiere Git (el de KN_GIT o, si no está definida, el de PATH) y Rust compatibl
 
 - `crates/kn/src/main.rs`: clap, alias, salida humana/JSON/porcelain y códigos de salida.
 - `crates/kn-core/src/git.rs`: único runner Git; resuelve el ejecutable y conserva el aislamiento del entorno. Todo proceso se crea con `git::process`, que en Windows no abre consola.
-- `crates/kn-core/src/workspace.rs`: identidad, descubrimiento, rutas, locks y persistencia.
+- `crates/kn-core/src/workspace.rs`: identidad, descubrimiento, rutas, locks, persistencia y `migrate`.
+- `crates/kn-core/src/registry.rs`: registro de principales en `KN_HOME/roots.json`, la fuente de su identidad.
 - `crates/kn-core/src/ops.rs`: cambios, commits, historial, observación y restauración.
 - `crates/kn-core/src/sessions.rs`: worktrees e integración a la principal.
 - `crates/kn-core/src/plumbing.rs`: consultas para herramientas; `inspect.rs` es experimental.

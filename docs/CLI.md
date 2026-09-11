@@ -6,7 +6,8 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 
 | Comando | Resultado |
 | --- | --- |
-| `init [--fresh]` | Inicializa; fresh asigna otra identidad, no convierte el historial anterior |
+| `init [--fresh]` | Registra la carpeta en KN_HOME y captura sus documentos, sin escribir en ella. Si ya estaba registrada, o tiene un marcador cuyo historial está en esta máquina, la reutiliza (`already_exists: true`). fresh registra otra identidad; el historial anterior queda sin referencia |
+| `migrate` | Registra una principal con `.kn/config.json` y quita su `.kn`; véase [Identidad de una carpeta](#identidad-de-una-carpeta) |
 | `status [--refresh]` | Cambios, conflictos, capacidades; refresh no disponible |
 | `diff [--patch] [--base\|--remote]` | Cambios desde HEAD; base/remote no disponibles |
 | `commit [-m mensaje]` | Registra una versión con los documentos permitidos de la sesión; alias snapshot |
@@ -29,7 +30,7 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | `KN_HOME` | Carpeta del historial y las sesiones; `~/.kn` por defecto |
 | `KN_GIT` | Ruta absoluta del ejecutable git. Si está definida, gana sobre PATH; si es inválida, el comando falla con GIT_MISSING y no busca en PATH |
 
-Sin `KN_GIT`, kn usa el primer `git` de PATH (`git.exe` en Windows) e ignora las entradas relativas. La elección se hace una vez por proceso. `init` la comprueba antes de crear `.kn/` o KN_HOME. En Windows, los procesos que kn lanza no abren ventana de consola.
+Sin `KN_GIT`, kn usa el primer `git` de PATH (`git.exe` en Windows) e ignora las entradas relativas. La elección se hace una vez por proceso. `init` la comprueba antes de crear KN_HOME. En Windows, los procesos que kn lanza no abren ventana de consola.
 
 ## Consultas Git para consumidores
 
@@ -38,7 +39,7 @@ Sin `KN_GIT`, kn usa el primer `git` de PATH (`git.exe` en Windows) e ignora las
 | Consulta | stdout con terminador LF |
 | --- | --- |
 | `--is-inside-work-tree` | `true` dentro de kn; fuera de kn, error con stdout vacío |
-| `--show-toplevel` | Ruta absoluta de la principal o sesión que contiene el cwd |
+| `--show-toplevel` | Ruta absoluta de la carpeta kn más cercana que contiene el cwd: principal registrada, principal con marcador o sesión |
 | `--git-dir` | Ruta absoluta del directorio Git de ese worktree |
 | `--git-common-dir` | Ruta absoluta del historial compartido entre esas sesiones locales |
 | `HEAD` | Identificador completo del commit, distinto al ID visible `v_…` |
@@ -79,19 +80,57 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 
 | code | Situación |
 | --- | --- |
-| INVALID_INPUT | Argumentos, formato de versión o schema no admitido |
+| INVALID_INPUT | Argumentos, formato de versión o schema no admitido; `init` dentro de una sesión o de KN_HOME; un marcador cuyo historial no está en esta máquina; `migrate` desde una sesión |
 | UNSUPPORTED_CAPABILITY | Cloud u otra operación no implementada |
-| NOT_A_WORKSPACE | No se descubrió un registro kn |
+| NOT_A_WORKSPACE | No se descubrió una carpeta kn; también, una principal registrada después de moverla |
 | WORKSPACE_BUSY | Se agotó la espera de lock |
-| WORKSPACE_COPIED | La misma identidad apunta a otra ubicación todavía existente |
-| WORKSPACE_IDENTITY_CHANGED | Una sesión antigua intenta acceder a una principal de otro espacio |
+| WORKSPACE_COPIED | Un marcador anterior cuya identidad está registrada o ubicada en otra carpeta todavía existente |
+| WORKSPACE_IDENTITY_CHANGED | Una sesión cuya principal tiene ahora otra identidad, registrada o en su marcador |
 | SESSION_REQUIRED | Escritura de documentos fuera de una sesión |
-| CONFLICT | Integración divergente, conflictos o archivos no versionados que obstruyen |
+| CONFLICT | Integración divergente, conflictos o archivos no versionados que obstruyen; `migrate` ante archivos ajenos en `.kn` o un marcador de otro historial |
 | UNSAFE_PATH | Registro, symlink o ruta que viola las restricciones |
 | GIT_FAILED | Falló el proceso Git |
 | GIT_MISSING | No hay Git: KN_GIT es relativa, no existe o no es un archivo, o no está definida y PATH no tiene git. El mensaje nombra el remedio del sistema |
 | IO_ERROR | Falló filesystem/proceso |
 | INVALID_STATE | Estado JSON no se puede deserializar |
+
+## Identidad de una carpeta
+
+`$KN_HOME/roots.json` registra cada principal por su ruta canónica:
+
+```json
+{
+  "schema_version": 1,
+  "roots": {
+    "/Users/ana/Documentos/propuesta": "0b8f2c5e-3d1a-4f7e-9c6b-2a4d8e1f7c30"
+  }
+}
+```
+
+Una raíz tiene una sola identidad, y una identidad una sola raíz. kn escribe el registro con escritura temporal y rename, bajo `$KN_HOME/roots.lock`. Lo actualizan `init`, `migrate` y las operaciones que escriben en el historial de una principal; las consultas, `status`, `diff`, `log` e `inspect` solo lo leen. Un `schema_version` desconocido es INVALID_INPUT; un archivo ilegible, INVALID_STATE.
+
+La carpeta kn es la más cercana al cwd que está registrada o que tiene `.kn/config.json`: con `session`, una sesión; sin `session`, una principal inicializada antes del registro. En la misma carpeta gana el registro. Una carpeta dentro de una principal puede ser otra principal, con su propio historial.
+
+`init` sobre una carpeta con marcador anterior la reutiliza si su historial está en esta máquina. Si no, registra una identidad nueva y no toca el marcador. `init --fresh` siempre registra una identidad nueva; el historial anterior queda intacto en `$KN_HOME/repos/`, sin referencia.
+
+Límite: una principal registrada que se mueve o se renombra no está registrada en su nueva ruta. Allí es NOT_A_WORKSPACE, e `init` empieza otro historial.
+
+### `migrate`
+
+`kn migrate`, desde la principal o una subcarpeta suya, pasa una principal con marcador al registro:
+
+1. Comprueba que el historial del `workspace_id` del marcador esté en esta máquina y que la carpeta no sea una copia (WORKSPACE_COPIED).
+2. Registra la raíz.
+3. Quita `<raíz>/.kn/config.json`, `<raíz>/.kn/kn.lock` y la carpeta `.kn`, que queda vacía.
+
+Si `.kn` contiene cualquier otro archivo, o un marcador de otro historial, devuelve CONFLICT y no quita nada; el mensaje nombra los archivos. En una carpeta ya migrada no cambia nada y termina con 0.
+
+| Campo | Contenido |
+| --- | --- |
+| `registered` | `true` si esta ejecución registró la raíz |
+| `removed` | Rutas absolutas quitadas, en el orden en que se quitaron |
+| `workspace_id` | Identidad de la principal |
+| `root` | Raíz canónica |
 
 ## Documentos que siguen en la nube
 
@@ -118,7 +157,7 @@ Límite: la clasificación depende del registro. Un documento que el proveedor d
 | Opción | Efecto |
 | --- | --- |
 | `--timeout-secs N` | Segundos de espera por documento; 60 por defecto, mínimo 1 |
-| `--max-bytes N` | Se detiene antes de superar N bytes, sumando el tamaño aparente de cada documento intentado; los restantes van a `skipped_budget` |
+| `--max-bytes N` | Se detiene antes de superar N bytes, sumando el tamaño aparente de cada documento intentado; los restantes van a `skipped_budget`. Con 0 no lee ninguno, tampoco los de tamaño aparente cero: abrirlos ya pide la descarga |
 
 `data` contiene:
 

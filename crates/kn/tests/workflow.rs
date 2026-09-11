@@ -60,6 +60,42 @@ impl Fixture {
 fn session_path(value: &Value) -> PathBuf {
     PathBuf::from(value["data"]["path"].as_str().unwrap())
 }
+fn canonical(path: &Path) -> String {
+    fs::canonicalize(path).unwrap().to_str().unwrap().to_owned()
+}
+fn toplevel(path: &Path) -> String {
+    format!("{}\n", canonical(path))
+}
+impl Fixture {
+    fn registry(&self) -> Value {
+        match fs::read(self.home.join("roots.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap(),
+            Err(_) => json!({"schema_version": 1, "roots": {}}),
+        }
+    }
+    fn registered(&self, root: &Path) -> Value {
+        self.registry()["roots"][canonical(root)].clone()
+    }
+    /// Deja `root` como la dejaba un kn anterior al registro: marcador y lock en
+    /// `.kn`, y ninguna entrada en roots.json.
+    fn make_legacy(&self, root: &Path, id: &Value) {
+        fs::create_dir_all(root.join(".kn")).unwrap();
+        let config = json!({"schema_version": 2, "workspace_id": id, "session": null});
+        fs::write(root.join(".kn/config.json"), config.to_string()).unwrap();
+        fs::write(root.join(".kn/kn.lock"), "").unwrap();
+        let mut registry = self.registry();
+        registry["roots"]
+            .as_object_mut()
+            .unwrap()
+            .remove(&canonical(root));
+        fs::write(self.home.join("roots.json"), registry.to_string()).unwrap();
+    }
+    fn legacy(&self) -> Value {
+        let init = self.init();
+        self.make_legacy(&self.main, &init["data"]["workspace_id"]);
+        init
+    }
+}
 #[test]
 fn git_resolution_follows_kn_git_and_reports_missing_git() {
     let f = Fixture::new();
@@ -113,7 +149,8 @@ fn git_resolution_follows_kn_git_and_reports_missing_git() {
     let (code, done) = init(Some(real_git), no_git.as_os_str());
     assert_eq!(code, Some(0), "{done}");
     assert_eq!(done["status"], "ok");
-    assert!(f.main.join(".kn/config.json").is_file());
+    assert!(!f.main.join(".kn").exists());
+    assert_eq!(f.registered(&f.main), done["data"]["workspace_id"]);
 }
 #[test]
 fn cloud_only_documents_wait_without_blocking_or_being_deleted() {
@@ -357,9 +394,11 @@ fn a_failed_init_leaves_no_orphan_history() {
         !repos.exists() || fs::read_dir(&repos).unwrap().next().is_none(),
         "un init fallido no deja historial en KN_HOME"
     );
+    assert_eq!(f.registry()["roots"], json!({}), "ni lo registra");
     fs::remove_file(f.main.join("fuera")).unwrap();
-    f.init();
+    let init = f.init();
     assert_eq!(fs::read_dir(&repos).unwrap().count(), 1);
+    assert_eq!(f.registered(&f.main), init["data"]["workspace_id"]);
 }
 #[test]
 fn documents_sessions_restore_and_publish_locally() {
@@ -370,10 +409,10 @@ fn documents_sessions_restore_and_publish_locally() {
     fs::write(f.main.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     let init = f.init();
     let first = init["data"]["initial_version_id"].as_str().unwrap();
-    assert_eq!(
-        f.init()["data"]["workspace_id"],
-        init["data"]["workspace_id"]
-    );
+    assert_eq!(init["data"]["already_exists"], false);
+    let again = f.init();
+    assert_eq!(again["data"]["workspace_id"], init["data"]["workspace_id"]);
+    assert_eq!(again["data"]["already_exists"], true);
     f.run(&f.main, &["snapshot"], 3);
     let session = f.session("policy");
     let gitfile = fs::read(session.join(".git")).unwrap();
@@ -493,7 +532,8 @@ fn special_names_ignores_empty_folders_and_read_only_queries() {
 fn copies_moves_locks_and_invalid_input() {
     use fs2::FileExt;
     let f = Fixture::new();
-    let init = f.init();
+    // Copiar o mover solo lleva la identidad con un marcador anterior al registro.
+    let init = f.legacy();
     let copy = f._tmp.path().join("copy");
     fs::create_dir_all(copy.join(".kn")).unwrap();
     fs::copy(f.main.join(".kn/config.json"), copy.join(".kn/config.json")).unwrap();
@@ -505,10 +545,26 @@ fn copies_moves_locks_and_invalid_input() {
         f.run(&copy, &["init", "--fresh"], 0)["data"]["workspace_id"],
         init["data"]["workspace_id"]
     );
+    assert_eq!(
+        fs::read(copy.join(".kn/config.json")).unwrap(),
+        fs::read(f.main.join(".kn/config.json")).unwrap(),
+        "--fresh no reescribe el marcador"
+    );
     let moved = f._tmp.path().join("moved");
     fs::rename(&f.main, &moved).unwrap();
     f.run(&moved, &["status"], 0);
-    f.run(&moved, &["init"], 0);
+    let reused = f.run(&moved, &["init"], 0);
+    assert_eq!(reused["data"]["workspace_id"], init["data"]["workspace_id"]);
+    assert_eq!(reused["data"]["already_exists"], true);
+    assert_eq!(f.registered(&moved), init["data"]["workspace_id"]);
+    // Una copia hecha antes de registrar la principal movida sigue siendo una copia.
+    let late = f._tmp.path().join("late-copy");
+    fs::create_dir_all(late.join(".kn")).unwrap();
+    fs::copy(moved.join(".kn/config.json"), late.join(".kn/config.json")).unwrap();
+    assert_eq!(
+        f.run(&late, &["status"], 1)["errors"][0]["code"],
+        "WORKSPACE_COPIED"
+    );
     let s = PathBuf::from(
         f.run(&moved, &["session", "start", "new"], 0)["data"]["path"]
             .as_str()
@@ -829,24 +885,39 @@ fn inspect_is_read_only_even_after_manual_changes_and_a_move() {
         walk(root, root, &mut out);
         out
     }
-    let f = Fixture::new();
-    f.init();
-    let moved = f._tmp.path().join("moved");
-    fs::rename(&f.main, &moved).unwrap();
-    fs::write(moved.join("manual.txt"), "not yet observed").unwrap();
-    let before = tree(f._tmp.path());
-    let out = f.run(&moved, &["inspect"], 0);
-    assert_eq!(
-        out["data"]["primary_root"],
-        fs::canonicalize(&moved).unwrap().to_str().unwrap()
-    );
-    assert_eq!(tree(f._tmp.path()), before);
+    for legacy in [true, false] {
+        let f = Fixture::new();
+        if legacy {
+            f.legacy();
+        } else {
+            f.init();
+        }
+        let moved = f._tmp.path().join("moved");
+        fs::rename(&f.main, &moved).unwrap();
+        fs::write(moved.join("manual.txt"), "not yet observed").unwrap();
+        let before = tree(f._tmp.path());
+        let out = f.run(&moved, &["inspect"], 0);
+        if legacy {
+            assert_eq!(out["data"]["primary_root"], canonical(&moved));
+        } else {
+            // El registro nombra la ruta anterior; en la nueva no hay identidad.
+            assert_eq!(out["data"]["managed"], false);
+        }
+        assert_eq!(tree(f._tmp.path()), before);
+    }
 }
 
 #[test]
 fn inspect_does_not_hide_damaged_or_copied_workspaces() {
+    let registered = Fixture::new();
+    registered.init();
+    fs::write(registered.home.join("roots.json"), "broken").unwrap();
+    assert_eq!(
+        registered.run(&registered.main, &["inspect"], 1)["errors"][0]["code"],
+        "INVALID_STATE"
+    );
     let f = Fixture::new();
-    f.init();
+    f.legacy();
     let copy = f._tmp.path().join("copy");
     fs::create_dir_all(copy.join(".kn")).unwrap();
     fs::copy(f.main.join(".kn/config.json"), copy.join(".kn/config.json")).unwrap();
@@ -1018,31 +1089,389 @@ fn git_named_queries_and_aliases_support_service_integration() {
 
 #[test]
 fn old_sessions_cannot_publish_to_a_reinitialized_primary() {
-    let f = Fixture::new();
-    f.init();
-    let old = f.session("old");
-    fs::write(old.join("draft.txt"), "keep in old session").unwrap();
-    f.run(&old, &["commit"], 0);
-    let fresh = f.run(&f.main, &["init", "--fresh"], 0);
-    for args in [
-        vec!["worktree", "add", "new"],
-        vec!["worktree", "update"],
-        vec!["worktree", "finish"],
-    ] {
+    // Con marcador anterior, --fresh no lo reescribe: el registro tiene que ganarle.
+    for legacy in [false, true] {
+        let f = Fixture::new();
+        if legacy {
+            f.legacy();
+        } else {
+            f.init();
+        }
+        let old = f.session("old");
+        fs::write(old.join("draft.txt"), "keep in old session").unwrap();
+        f.run(&old, &["commit"], 0);
+        let fresh = f.run(&f.main, &["init", "--fresh"], 0);
+        assert_eq!(f.registered(&f.main), fresh["data"]["workspace_id"]);
+        assert_eq!(f.main.join(".kn/config.json").exists(), legacy);
+        for args in [
+            vec!["worktree", "add", "new"],
+            vec!["worktree", "update"],
+            vec!["worktree", "finish"],
+        ] {
+            assert_eq!(
+                f.run(&old, &args, 1)["errors"][0]["code"],
+                "WORKSPACE_IDENTITY_CHANGED"
+            );
+        }
+        assert!(!f.main.join("draft.txt").exists());
         assert_eq!(
-            f.run(&old, &args, 1)["errors"][0]["code"],
-            "WORKSPACE_IDENTITY_CHANGED"
+            fs::read_to_string(old.join("draft.txt")).unwrap(),
+            "keep in old session"
+        );
+        assert_eq!(
+            f.run(&f.main, &["inspect"], 0)["data"]["workspace_id"],
+            fresh["data"]["workspace_id"]
         );
     }
-    assert!(!f.main.join("draft.txt").exists());
+}
+
+fn names(dir: &Path) -> Vec<String> {
+    let mut out: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn init_writes_nothing_into_the_documents_folder() {
+    let f = Fixture::new();
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join("anexos/nota.md"), "dos\n").unwrap();
+    let before = names(&f.main);
+    let init = f.init();
+    let id = init["data"]["workspace_id"].clone();
+    assert_eq!(init["data"]["already_exists"], false);
+    assert_eq!(names(&f.main), before, "ni .kn ni lock en la carpeta");
+    assert_eq!(f.registry()["schema_version"], 1);
+    assert_eq!(f.registered(&f.main), id);
+    let again = f.init();
+    assert_eq!(again["data"]["workspace_id"], id);
+    assert_eq!(again["data"]["already_exists"], true);
+
+    let sub = f.main.join("anexos");
+    assert_eq!(f.run(&sub, &["status"], 0)["data"]["workspace_id"], id);
     assert_eq!(
-        fs::read_to_string(old.join("draft.txt")).unwrap(),
-        "keep in old session"
+        f.raw(&sub, &["rev-parse", "--is-inside-work-tree"], 0),
+        b"true\n"
     );
     assert_eq!(
-        f.run(&f.main, &["inspect"], 0)["data"]["workspace_id"],
+        f.raw(&sub, &["rev-parse", "--show-toplevel"], 0),
+        toplevel(&f.main).as_bytes()
+    );
+    let s = session_path(&f.run(&sub, &["worktree", "add", "agente"], 0));
+    fs::write(s.join("respuesta.md"), "del agente\n").unwrap();
+    f.run(&s, &["commit", "-m", "Respuesta"], 0);
+    f.run(&s, &["worktree", "update"], 0);
+    f.run(&s, &["worktree", "finish"], 0);
+    assert_eq!(
+        fs::read_to_string(f.main.join("respuesta.md")).unwrap(),
+        "del agente\n"
+    );
+    assert!(f.raw(&sub, &["status", "--porcelain", "-z"], 0).is_empty());
+    assert_eq!(
+        f.run(&sub, &["worktree", "list"], 0)["data"]["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(!f.main.join(".kn").exists());
+
+    // Mover una carpeta registrada la deja sin identidad; init allí empieza otra.
+    let moved = f._tmp.path().join("moved");
+    fs::rename(&f.main, &moved).unwrap();
+    assert_eq!(
+        f.run(&moved, &["status"], 1)["errors"][0]["code"],
+        "NOT_A_WORKSPACE"
+    );
+    let other = f.run(&moved, &["init"], 0);
+    assert_ne!(other["data"]["workspace_id"], id);
+    assert_eq!(other["data"]["already_exists"], false);
+}
+
+#[test]
+fn nested_primaries_keep_independent_histories() {
+    let f = Fixture::new();
+    let child = f.main.join("equipo");
+    fs::create_dir(&child).unwrap();
+    fs::write(f.main.join("plan.md"), "padre\n").unwrap();
+    fs::write(child.join("acta.md"), "hijo\n").unwrap();
+    let parent = f.init();
+    let hijo = f.run(&child, &["init"], 0);
+    assert_ne!(hijo["data"]["workspace_id"], parent["data"]["workspace_id"]);
+    assert_eq!(hijo["data"]["already_exists"], false);
+    assert!(!child.join(".kn").exists());
+
+    fs::create_dir(child.join("sub")).unwrap();
+    assert_eq!(
+        f.raw(&child.join("sub"), &["rev-parse", "--show-toplevel"], 0),
+        toplevel(&child).as_bytes()
+    );
+    assert_eq!(
+        f.raw(&f.main, &["rev-parse", "--show-toplevel"], 0),
+        toplevel(&f.main).as_bytes()
+    );
+    assert_eq!(
+        f.run(&child, &["status"], 0)["data"]["workspace_id"],
+        hijo["data"]["workspace_id"]
+    );
+
+    let s = session_path(&f.run(&child, &["worktree", "add", "equipo"], 0));
+    assert!(s.join("acta.md").is_file());
+    assert!(!s.join("plan.md").exists(), "la sesión es del hijo");
+    fs::write(s.join("respuesta.md"), "del agente\n").unwrap();
+    f.run(&s, &["worktree", "finish"], 0);
+    assert_eq!(
+        fs::read_to_string(child.join("respuesta.md")).unwrap(),
+        "del agente\n"
+    );
+
+    // Para la principal de arriba, lo que guardó el hijo es un cambio externo.
+    let status = f.run(&f.main, &["status"], 0);
+    assert_eq!(
+        status["data"]["local_changes"][0]["path"],
+        "equipo/respuesta.md"
+    );
+    let p = session_path(&f.run(&f.main, &["worktree", "add", "padre"], 0));
+    let log = f.run(&p, &["log"], 0)["data"]["versions"].clone();
+    assert_eq!(log[0]["reason"], "external_observation");
+    assert_eq!(
+        version_files(&f, &parent, &log[0]["id"]),
+        ["equipo/respuesta.md"]
+    );
+    assert_eq!(
+        fs::read_to_string(p.join("equipo/respuesta.md")).unwrap(),
+        "del agente\n"
+    );
+}
+
+#[test]
+fn init_inside_a_session_is_refused() {
+    let f = Fixture::new();
+    f.init();
+    let s = f.session("agente");
+    fs::create_dir(s.join("sub")).unwrap();
+    for dir in [s.clone(), s.join("sub")] {
+        for args in [vec!["init"], vec!["init", "--fresh"]] {
+            let out = f.run(&dir, &args, 3);
+            assert_eq!(out["errors"][0]["code"], "INVALID_INPUT");
+            assert!(
+                out["errors"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("sesión"),
+                "{out}"
+            );
+        }
+    }
+    assert_eq!(fs::read_dir(f.home.join("repos")).unwrap().count(), 1);
+    assert_eq!(f.registry()["roots"].as_object().unwrap().len(), 1);
+}
+
+#[test]
+fn legacy_markers_keep_working_and_migrate_removes_them() {
+    let f = Fixture::new();
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    let init = f.legacy();
+    let id = init["data"]["workspace_id"].clone();
+    let registry = fs::read(f.home.join("roots.json")).unwrap();
+
+    // Las lecturas no registran.
+    assert_eq!(f.run(&f.main, &["status"], 0)["data"]["workspace_id"], id);
+    assert_eq!(
+        f.raw(&f.main, &["rev-parse", "--show-toplevel"], 0),
+        toplevel(&f.main).as_bytes()
+    );
+    assert!(
+        f.raw(&f.main, &["status", "--porcelain", "-z"], 0)
+            .is_empty()
+    );
+    assert_eq!(f.run(&f.main, &["inspect"], 0)["data"]["workspace_id"], id);
+    assert_eq!(fs::read(f.home.join("roots.json")).unwrap(), registry);
+
+    let migrated = f.run(&f.main, &["migrate"], 0)["data"].clone();
+    let control = fs::canonicalize(&f.main).unwrap().join(".kn");
+    assert_eq!(migrated["registered"], true);
+    assert_eq!(migrated["workspace_id"], id);
+    assert_eq!(
+        migrated["removed"],
+        json!([
+            control.join("config.json"),
+            control.join("kn.lock"),
+            control
+        ])
+    );
+    assert!(!f.main.join(".kn").exists());
+    assert_eq!(f.registered(&f.main), id);
+
+    let s = f.session("agente");
+    fs::write(s.join("respuesta.md"), "del agente\n").unwrap();
+    f.run(&s, &["commit", "-m", "Respuesta"], 0);
+    f.run(&s, &["worktree", "finish"], 0);
+    assert_eq!(f.run(&f.main, &["status"], 0)["data"]["workspace_id"], id);
+    assert!(
+        f.run(&s, &["log"], 0)["data"]["versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["reason"] == "init"),
+        "el historial es el mismo"
+    );
+
+    let again = f.run(&f.main, &["migrate"], 0)["data"].clone();
+    assert_eq!(again["registered"], false);
+    assert_eq!(again["removed"], json!([]));
+    assert_eq!(again["workspace_id"], id);
+    assert_eq!(
+        f.run(&s, &["migrate"], 3)["errors"][0]["code"],
+        "INVALID_INPUT"
+    );
+
+    // Una escritura registra la carpeta y no toca su marcador.
+    let g = Fixture::new();
+    let init = g.legacy();
+    let marker = g.main.join(".kn/config.json");
+    let marker_bytes_g = fs::read(&marker).unwrap();
+    g.session("agente");
+    assert_eq!(g.registered(&g.main), init["data"]["workspace_id"]);
+    assert_eq!(fs::read(&marker).unwrap(), marker_bytes_g);
+    let migrated = g.run(&g.main, &["migrate"], 0)["data"].clone();
+    assert_eq!(migrated["registered"], false);
+    assert_eq!(migrated["removed"].as_array().unwrap().len(), 3);
+
+    // Con algo ajeno en .kn no se quita nada.
+    let h = Fixture::new();
+    h.legacy();
+    let marker_bytes = fs::read(h.main.join(".kn/config.json")).unwrap();
+    fs::write(h.main.join(".kn/notas.txt"), "de la persona").unwrap();
+    let refused = h.run(&h.main, &["migrate"], 2);
+    assert_eq!(refused["errors"][0]["code"], "CONFLICT");
+    assert!(
+        refused["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("notas.txt")
+    );
+    assert_eq!(
+        fs::read(h.main.join(".kn/config.json")).unwrap(),
+        marker_bytes
+    );
+    assert!(h.main.join(".kn/kn.lock").is_file());
+    assert_eq!(h.registered(&h.main), Value::Null);
+}
+
+#[test]
+fn a_synced_legacy_marker_does_not_block_another_machine() {
+    let f = Fixture::new();
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    let owner = f.legacy();
+    let marker = f.main.join(".kn/config.json");
+    let marker_bytes = fs::read(&marker).unwrap();
+    let other_home = f._tmp.path().join("otra-maquina");
+    let other = [("KN_HOME", other_home.to_str().unwrap())];
+
+    let missing = f.run_env(&f.main, &["status"], 3, &other);
+    assert!(
+        missing["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("kn init"),
+        "{missing}"
+    );
+    let mine = f.run_env(&f.main, &["init"], 0, &other);
+    assert_ne!(mine["data"]["workspace_id"], owner["data"]["workspace_id"]);
+    assert_eq!(mine["data"]["already_exists"], false);
+    assert_eq!(fs::read(&marker).unwrap(), marker_bytes);
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &other)["data"]["workspace_id"],
+        mine["data"]["workspace_id"]
+    );
+    let fresh = f.run_env(&f.main, &["init", "--fresh"], 0, &other);
+    assert_ne!(fresh["data"]["workspace_id"], mine["data"]["workspace_id"]);
+    assert_eq!(fs::read(&marker).unwrap(), marker_bytes);
+    assert_eq!(
+        f.run_env(&f.main, &["migrate"], 2, &other)["errors"][0]["code"],
+        "CONFLICT"
+    );
+    assert_eq!(fs::read(&marker).unwrap(), marker_bytes);
+
+    // La dueña sigue con su historial, y al migrar la otra máquina no lo nota.
+    assert_eq!(
+        f.run(&f.main, &["status"], 0)["data"]["workspace_id"],
+        owner["data"]["workspace_id"]
+    );
+    f.session("duena");
+    f.run(&f.main, &["migrate"], 0);
+    assert!(!f.main.join(".kn").exists());
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &other)["data"]["workspace_id"],
         fresh["data"]["workspace_id"]
     );
+}
+
+#[test]
+fn orphan_histories_are_ignored() {
+    let f = Fixture::new();
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    let orphan = |id: &str| {
+        let dir = f.home.join("repos").join(id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let location = json!({"root": canonical(&f.main)});
+        fs::write(dir.join("location.json"), location.to_string()).unwrap();
+    };
+    let first = "11111111-1111-4111-8111-111111111111";
+    orphan(first);
+    assert_eq!(
+        f.run(&f.main, &["status"], 1)["errors"][0]["code"],
+        "NOT_A_WORKSPACE"
+    );
+    let init = f.init();
+    let id = init["data"]["workspace_id"].clone();
+    assert_ne!(id, first);
+    assert_eq!(init["data"]["already_exists"], false);
+    orphan("22222222-2222-4222-8222-222222222222");
+    assert_eq!(f.run(&f.main, &["status"], 0)["data"]["workspace_id"], id);
+    assert_eq!(f.init()["data"]["workspace_id"], id);
+    let fresh = f.run(&f.main, &["init", "--fresh"], 0)["data"]["workspace_id"].clone();
+    assert_ne!(fresh, id);
+    assert_eq!(
+        f.run(&f.main, &["status"], 0)["data"]["workspace_id"],
+        fresh
+    );
+    assert!(
+        f.home
+            .join("repos")
+            .join(id.as_str().unwrap())
+            .join("HEAD")
+            .is_file(),
+        "--fresh conserva el historial anterior"
+    );
+}
+
+#[test]
+fn cloud_fetch_with_a_zero_budget_reads_nothing() {
+    let f = Fixture::new();
+    let (vacio, lleno) = ("vacio.pdf", "anexos/informe.pdf");
+    fs::write(f.main.join(vacio), "").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(lleno), "contenido\n").unwrap();
+    let nube = [(NUBE, "vacio.pdf\nanexos/informe.pdf")];
+    f.run_env(&f.main, &["init"], 0, &nube);
+
+    let none =
+        f.run_env(&f.main, &["cloud", "fetch", "--max-bytes", "0"], 0, &nube)["data"].clone();
+    assert_eq!(none["fetched"], json!([]));
+    assert_eq!(none["failed"], json!([]));
+    assert_eq!(none["skipped_budget"], json!([vacio, lleno]));
+    assert_eq!(none["bytes_fetched"], 0);
+
+    let one = f.run_env(&f.main, &["cloud", "fetch", "--max-bytes", "1"], 0, &nube)["data"].clone();
+    assert_eq!(one["fetched"], json!([vacio]));
+    assert_eq!(one["skipped_budget"], json!([lleno]));
 }
 
 #[cfg(unix)]

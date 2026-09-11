@@ -17,7 +17,11 @@
 - Licencia doble: MIT o Apache-2.0, a elección de quien lo use (`LICENSE-MIT`, `LICENSE-APACHE`).
 - La principal recuerda qué seguía en la nube en su última versión (`$KN_HOME/repos/<id>/cloud-pending.json`). `status` y `worktree add` informan `downloaded_since_last_observation`, y la observación registra lo descargado en su propia versión `cloud_download`, antes de los cambios manuales (`external_observation`).
 - `kn cloud fetch [--timeout-secs N] [--max-bytes N]` descarga los documentos pendientes leyéndolos, del menor al mayor, con un límite de espera por documento. Devuelve `fetched`, `failed`, `skipped_budget`, `remaining` y `bytes_fetched`; no crea versiones.
+- La identidad de una principal vive en `$KN_HOME/roots.json` (ruta canónica → id) y no en la carpeta. `init` ya no crea `.kn/` ni su lock, que pasa a `$KN_HOME/locks/`. Una carpeta de Drive u OneDrive ya no lleva a otras máquinas un marcador sin historial, y nadie la rompe para su dueña con `init --fresh`.
+- Carpetas anidadas con historiales independientes: lo que integra la de abajo llega a la de arriba como `external_observation`. Inicializar dentro de una sesión sigue rechazado.
+- `kn migrate` registra una principal con `.kn/config.json` y quita su `.kn`; devuelve `registered`, `removed` y `workspace_id`. Las carpetas con marcador siguen funcionando y se registran en su siguiente escritura. Un marcador cuyo historial no está en esta máquina ya no bloquea `init`.
+- `cloud fetch --max-bytes 0` no lee ningún documento, tampoco los de tamaño aparente cero.
 
 ### Límites de compatibilidad
 
-La configuración local usa schema 2. `init --fresh` inicia otro historial y no importa versiones Go. Las sesiones son obligatorias para commit/restore; las carpetas vacías no se versionan. Nube, identidad personal, recuperación transaccional, releases automáticos y validación de Terminus siguen pendientes. El PR Go #1 queda como referencia y el issue #2 conserva sus pendientes.
+El registro usa schema 1 y los marcadores de sesión, schema 2. Mover o renombrar una principal registrada la deja sin identidad: `init` en la nueva ruta empieza otro historial. `init --fresh` inicia otro historial y no importa versiones Go. Las sesiones son obligatorias para commit/restore; las carpetas vacías no se versionan. Nube, identidad personal, recuperación transaccional, releases automáticos y validación de Terminus siguen pendientes. El PR Go #1 queda como referencia y el issue #2 conserva sus pendientes.

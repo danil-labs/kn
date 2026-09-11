@@ -38,17 +38,22 @@ Cada sesión usa una rama `sessions/<nombre>` y archivos de trabajo separados; l
 
 Después repite con una carpeta desechable sincronizada con Drive, usando archivos descargados y disponibles localmente y manteniendo KN_HOME fuera de cualquier sincronización. Al integrar, el cliente de Drive puede subir los cambios de la principal por su cuenta, archivo por archivo. Esto no equivale a `kn push` ni garantiza una publicación indivisible. Los accesos a documentos nativos de Google no respaldan su contenido mediante este flujo de archivos.
 
-Los colaboradores pueden editar la principal sin usar kn. Compartir esa carpeta por Drive no comparte las ramas ni el historial local, y `.kn/config.json` no autentica a personas o máquinas. El diseño de colaboración cloud pendiente se describe en [la evaluación y propuesta](docs/RUST-AND-COLLABORATION.md). Para integrar kn en otras herramientas y consultar estados, usa el [contrato CLI](docs/CLI.md).
+Los colaboradores pueden editar la principal sin usar kn. Compartir esa carpeta por Drive no comparte las ramas ni el historial local. kn no escribe nada en la carpeta: su identidad vive en el KN_HOME de cada máquina y no autentica a personas ni máquinas. El diseño de colaboración cloud pendiente se describe en [la evaluación y propuesta](docs/RUST-AND-COLLABORATION.md). Para integrar kn en otras herramientas y consultar estados, usa el [contrato CLI](docs/CLI.md).
 
 ## Dónde viven los archivos
 
-- Principal: documentos, `.kn/config.json` y lock de inicialización `.kn/kn.lock`, sin un `.git` creado por `kn`.
+- Principal: solo documentos. kn no crea en ella `.git`, `.kn` ni locks.
+- Registro: `$KN_HOME/roots.json`, con la ruta de cada principal y su id.
 - Historial: `$KN_HOME/repos/<id>/`, o `~/.kn/repos/<id>/` por defecto.
 - Sesiones: `$KN_HOME/sessions/<id>/<nombre>/`. Son worktrees Git reales, con su archivo `.git` local.
 
 **KN_HOME debe quedar fuera de cualquier carpeta sincronizada por Drive, OneDrive u otro cliente.** Se rechaza ubicarlo dentro de la principal, pero no se detectan todas las carpetas sincronizadas del sistema. No se deben sincronizar índices, locks, objetos ni registros de worktrees por un cliente de archivos. Un `.git` existente del usuario se conserva y se señala en `status`.
 
-Copiar los documentos no copia el historial. Una copia con la misma identidad se rechaza mientras exista la ubicación anterior: `kn init --fresh` le da historial independiente y conserva el antiguo. Después de mover la principal, ejecuta `kn init` en su nueva ubicación. Para respaldar, conserva principal y KN_HOME sin operaciones activas; los registros de worktrees usan rutas absolutas y requieren reparación con Git si se trasladan a otra máquina. Esto todavía no es un mecanismo de colaboración.
+Copiar los documentos no copia el historial ni la identidad: la copia no es una carpeta kn hasta que se ejecuta `kn init` en ella. Mover o renombrar una principal también la deja sin identidad: `kn init` en la nueva ubicación empieza otro historial, y el anterior queda en KN_HOME. Una carpeta dentro de otra se puede inicializar: cada una tiene su historial, y la de arriba ve lo que integra la de abajo como un cambio externo.
+
+Las carpetas inicializadas con versiones anteriores tienen `.kn/config.json` y siguen funcionando. Una copia con el mismo marcador se rechaza mientras exista la original, y `kn init --fresh` le da historial propio sin reescribir el marcador. `kn migrate`, desde la principal, pasa la identidad al registro y quita `.kn`.
+
+Para respaldar, conserva principal y KN_HOME sin operaciones activas; los registros de worktrees usan rutas absolutas y requieren reparación con Git si se trasladan a otra máquina. Esto todavía no es un mecanismo de colaboración.
 
 `.gitignore` se versiona y Git aplica sus exclusiones. Archivos ignorados no tienen respaldo en el historial. También se excluyen `.kn/` anidadas, basura del sistema y temporales de Office. Las carpetas vacías se reportan, pero **no se versionan**: no se crean marcadores. Los archivos se preservan como bytes, sin filtros ni conversión de finales de línea. Git puede combinar texto; documentos binarios en conflicto requieren elegir o editar una versión con su aplicación.
 
@@ -60,7 +65,7 @@ kn elige el ejecutable una vez por proceso, en este orden:
 2. El primer `git` de PATH (`git.exe` en Windows). Las entradas relativas de PATH se ignoran.
 3. Si no hay ninguno, falla con `GIT_MISSING` y un remedio por sistema: `xcode-select --install` en macOS, el gestor de paquetes en Linux, Git for Windows en Windows; en todos, definir KN_GIT.
 
-`init` comprueba Git antes de crear `.kn/` o KN_HOME. kn no instala Git. Una aplicación que empaqueta su propio git, como Terminus, lo pasa en KN_GIT.
+`init` comprueba Git antes de crear KN_HOME. kn no instala Git. Una aplicación que empaqueta su propio git, como Terminus, lo pasa en KN_GIT.
 
 ## Alcance y verificación
 
