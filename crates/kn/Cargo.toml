@@ -6,6 +6,7 @@ name = "kn"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 kn-core = { path = "../kn-core" }
