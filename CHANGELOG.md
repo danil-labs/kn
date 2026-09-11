@@ -12,6 +12,7 @@
 - Documentos que siguen en la nube: `init`, las observaciones y las sesiones continúan sin descargarlos, los reportan en `cloud_only` y los versionan cuando el proveedor los descarga.
 - Un `init` que falla ya no deja un historial huérfano en KN_HOME por cada reintento.
 - `worktree finish` registra lo pendiente de la sesión antes de integrar y lo cuenta en `recorded_document_count`. «Guardar» queda para integrar; `commit` registra una versión dentro de la sesión.
+- Licencia doble: MIT o Apache-2.0, a elección de quien lo use (`LICENSE-MIT`, `LICENSE-APACHE`).
 
 ### Límites de compatibilidad
 
