@@ -317,15 +317,16 @@ fn simulated(_: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{pattern, read_fully};
-    use std::{
-        fs,
-        time::{Duration, Instant},
-    };
+    use super::pattern;
 
     #[cfg(unix)]
     #[test]
     fn a_blocked_read_times_out_and_leaves_the_caller_free() {
+        use super::read_fully;
+        use std::{
+            fs,
+            time::{Duration, Instant},
+        };
         let tmp = tempfile::tempdir().unwrap();
         let fifo = tmp.path().join("sin escritor");
         assert!(
