@@ -75,12 +75,29 @@ enum Commands {
         #[command(subcommand)]
         command: Session,
     },
+    /// Documentos que el proveedor muestra pero todavía no descargó
+    Cloud {
+        #[command(subcommand)]
+        command: Cloud,
+    },
     Connect {
         provider: Option<String>,
     },
     Pull,
     Push,
     Version,
+}
+#[derive(Subcommand)]
+enum Cloud {
+    /// Descargar los pendientes de la principal leyéndolos; no crea versiones
+    Fetch {
+        /// Segundos de espera por documento
+        #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..))]
+        timeout_secs: u64,
+        /// Detenerse antes de superar estos bytes, por tamaño aparente
+        #[arg(long)]
+        max_bytes: Option<u64>,
+    },
 }
 #[derive(Subcommand)]
 enum Session {
@@ -166,6 +183,19 @@ fn execute(cli: &Cli) -> Result<Value> {
         )?)?);
     }
     let cwd = directory(cli)?;
+    if let Commands::Cloud {
+        command: Cloud::Fetch {
+            timeout_secs,
+            max_bytes,
+        },
+    } = &cli.command
+    {
+        return kn_core::cloud::fetch(
+            &cwd,
+            std::time::Duration::from_secs(*timeout_secs),
+            *max_bytes,
+        );
+    }
     if let Commands::Init { fresh } = cli.command {
         let already = cwd.join(".kn/config.json").exists() && !fresh;
         let ws = workspace::initialize(&cwd, fresh)?;
