@@ -61,7 +61,7 @@ enum Commands {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
-    /// Guardar una versión en la sesión actual
+    /// Registrar una versión en la sesión actual
     #[command(name = "commit", visible_alias = "snapshot")]
     Snapshot {
         #[arg(short, long, default_value = "")]

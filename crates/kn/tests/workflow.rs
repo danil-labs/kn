@@ -427,6 +427,25 @@ fn manual_documents_become_the_next_agent_sessions_baseline() {
 }
 
 #[test]
+fn finish_records_pending_edits_before_integrating() {
+    let f = Fixture::new();
+    f.init();
+    let s = f.session("agent");
+    fs::write(s.join("borrador.md"), "sin versión todavía\n").unwrap();
+    let out = f.run(&s, &["session", "finish"], 0);
+    assert_eq!(out["data"]["recorded_document_count"], 1);
+    assert_eq!(
+        fs::read_to_string(f.main.join("borrador.md")).unwrap(),
+        "sin versión todavía\n"
+    );
+    assert_eq!(
+        f.run(&s, &["history", "--limit", "1"], 0)["data"]["versions"][0]["reason"],
+        "pre_finish_snapshot"
+    );
+    assert_eq!(f.run(&s, &["status"], 0)["data"]["clean"], true);
+}
+
+#[test]
 fn manual_changes_during_agent_work_are_preserved_and_integrated() {
     let f = Fixture::new();
     fs::write(f.main.join("manual.txt"), "original\n").unwrap();
