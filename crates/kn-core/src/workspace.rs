@@ -294,10 +294,19 @@ pub fn initialize(root: &Path, fresh: bool) -> Result<Workspace> {
     let id = uuid::Uuid::new_v4();
     let common = home_path.join("repos").join(id.to_string());
     fs::create_dir_all(&common)?;
+    // Sin esto cada reintento de un init fallido deja otro historial huérfano en KN_HOME.
+    if let Err(e) = record_initial(&root, &common, id) {
+        let _ = fs::remove_dir_all(&common);
+        return Err(e);
+    }
+    Workspace::open(&root)
+}
+
+fn record_initial(root: &Path, common: &Path, id: uuid::Uuid) -> Result<()> {
     let git = Git {
-        dir: common.clone(),
-        common: common.clone(),
-        root: root.clone(),
+        dir: common.to_path_buf(),
+        common: common.to_path_buf(),
+        root: root.to_path_buf(),
     };
     git.run(&["init", "--initial-branch=main", "--template="])?;
     fs::create_dir_all(common.join("info"))?;
@@ -312,7 +321,9 @@ pub fn initialize(root: &Path, fresh: bool) -> Result<Workspace> {
     )?;
     atomic_json(
         &common.join("location.json"),
-        &Location { root: root.clone() },
+        &Location {
+            root: root.to_path_buf(),
+        },
     )?;
     let config = Config {
         schema_version: 2,
@@ -320,7 +331,8 @@ pub fn initialize(root: &Path, fresh: bool) -> Result<Workspace> {
         session: None,
     };
     crate::ops::check_safe(&git)?;
-    git.run(&["add", "-A", "--", "."])?;
+    let hidden = crate::cloud::Hidden::of(root)?;
+    git.run_with(&hidden.git_config()?, &["add", "-A", "--", "."])?;
     git.run(&[
         "commit",
         "--allow-empty",
@@ -330,6 +342,5 @@ pub fn initialize(root: &Path, fresh: bool) -> Result<Workspace> {
         "Kn-Reason: init",
     ])?;
     // Empty initial commit anchors worktrees; it is never exposed as a document version.
-    atomic_json(&root.join(".kn/config.json"), &config)?;
-    Workspace::open(&root)
+    atomic_json(&root.join(".kn/config.json"), &config)
 }
