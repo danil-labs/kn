@@ -106,7 +106,8 @@ pub fn check_safe(git: &Git) -> Result<()> {
             if e.file_type()?.is_dir() {
                 if e.path().join(".git").exists() {
                     return Err(Error::Unsafe(
-                        "Hay un repositorio anidado; sepáralo antes de guardar.".into(),
+                        "Hay un repositorio anidado; sepáralo antes de registrar una versión."
+                            .into(),
                     ));
                 }
                 nested(&e.path())?;
@@ -169,7 +170,7 @@ pub fn snapshot(ws: &Workspace, message: &str) -> Result<Value> {
     Ok(
         json!({"version_id": version(&sha), "changed_document_count": count, "created": created,
         "timestamp": ws.git.text(&["show", "-s", "--format=%cI", &sha])?, "reason": "manual_snapshot",
-        "message": if created { "Versión guardada en la sesión." } else { "No hay cambios que guardar." }}),
+        "message": if created { "Versión registrada en la sesión; la principal todavía no la tiene." } else { "No hay cambios que registrar." }}),
     )
 }
 pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, bool)> {
@@ -177,7 +178,8 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
     let unresolved = git.run(&["diff", "--name-only", "--diff-filter=U", "-z"])?;
     if !unresolved.is_empty() {
         return Err(Error::Conflict(
-            "Resuelve los documentos y marca la resolución con Git antes de guardar.".into(),
+            "Resuelve los documentos y marca la resolución con Git antes de registrar una versión."
+                .into(),
         ));
     }
     let hidden = crate::cloud::Hidden::of(&git.root)?;
@@ -192,7 +194,7 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
         "commit",
         "-m",
         if message.is_empty() {
-            "Versión guardada"
+            "Versión registrada"
         } else {
             message
         },
@@ -278,7 +280,7 @@ pub fn restore(ws: &Workspace, id: &str) -> Result<Value> {
         json!({"restored_version_id": id, "new_version_id": version(&after),
         "pre_restore_snapshot_id": version(&before), "sync_baseline_id": null,
         "changed_document_count": count, "created": created,
-        "message": "Restauración guardada en la sesión; la carpeta principal sigue igual."}),
+        "message": "Restauración registrada en la sesión; la carpeta principal sigue igual."}),
     )
 }
 

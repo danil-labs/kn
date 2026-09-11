@@ -15,9 +15,9 @@ kn commit -m "Propuesta revisada"
 kn worktree finish
 ```
 
-`finish` integra la versión guardada a la principal y conserva la sesión. Si otra sesión ya avanzó la principal, ejecuta `kn worktree update`, revisa el resultado y vuelve a integrar. Los conflictos permanecen en la sesión; su resolución avanzada usa Git. Al abrir o actualizar una sesión y antes de integrar, `kn` registra los cambios manuales observados en la principal como una versión de referencia (`external_observation`), sin reescribir sus documentos ni atribuir esos cambios al agente. Si la principal avanzó durante el trabajo, se pide actualizar la sesión antes de integrar. `status` solo informa: no crea versiones. No se necesita usar `kn` para colaborar manualmente.
+`finish` registra lo pendiente, lo integra a la principal y conserva la sesión. Si otra sesión ya avanzó la principal, ejecuta `kn worktree update`, revisa el resultado y vuelve a integrar. Los conflictos permanecen en la sesión; su resolución avanzada usa Git. Al abrir o actualizar una sesión y antes de integrar, `kn` registra los cambios manuales observados en la principal como una versión de referencia (`external_observation`), sin reescribir sus documentos ni atribuir esos cambios al agente. Si la principal avanzó durante el trabajo, se pide actualizar la sesión antes de integrar. `status` solo informa: no crea versiones. No se necesita usar `kn` para colaborar manualmente.
 
-`kn log --limit 20 --offset 0` lista versiones. `kn restore v_<12-hex>` restaura dentro de una sesión, guarda antes los cambios pendientes y crea una versión solo si hay cambios. No modifica la principal ni envía nada a la nube. `kn worktree list` muestra las sesiones conservadas.
+`kn log --limit 20 --offset 0` lista versiones. `kn restore v_<12-hex>` restaura dentro de una sesión, registra antes los cambios pendientes y crea una versión solo si hay cambios. No modifica la principal ni envía nada a la nube. `kn worktree list` muestra las sesiones conservadas.
 
 Los comandos de aplicación aceptan `--json`, incluidos errores de argumentos y ayuda. Las consultas `rev-parse` y los modos `--porcelain` usan salida de texto/bytes y rechazan combinarlos con `--json`. Salidas: 0 éxito, 1 error operativo, 2 conflicto, 3 entrada inválida o capacidad no disponible. `connect`, `push`, `pull`, `status --refresh` y `diff --base/--remote` devuelven capacidad no disponible.
 
@@ -30,7 +30,7 @@ Comprueba estas etapas antes de usar documentos reales:
 1. Edita un archivo dentro de la sesión: el documento de la principal debe seguir igual.
 2. Revisa `kn status` y `kn diff --patch`, y ejecuta `kn commit -m "Propuesta revisada"` desde la sesión: la principal debe seguir igual. Revisa también los archivos nuevos; el patch no muestra su contenido mientras no estén versionados.
 3. Cuando se autorice incorporar la propuesta, ejecuta `kn worktree finish` desde la sesión: ahora la principal recibe los cambios. La sesión se conserva.
-4. Para probar colaboración, crea otra sesión, guarda un cambio suyo y edita manualmente otro archivo en la principal. Ejecuta `kn worktree update` desde la sesión limpia, revisa la integración y luego `kn worktree finish`. Si hay conflictos, resuélvelos en la sesión y guarda el resultado antes de integrar.
+4. Para probar colaboración, crea otra sesión, registra un cambio suyo y edita manualmente otro archivo en la principal. Ejecuta `kn worktree update` desde la sesión limpia, revisa la integración y luego `kn worktree finish`. Si hay conflictos, resuélvelos en la sesión y registra el resultado antes de integrar.
 
 Cada sesión usa una rama `sessions/<nombre>` y archivos de trabajo separados; la principal usa `main`. Comparten los objetos y el historial Git local. No es una copia independiente del repositorio ni incluye archivos ignorados o carpetas vacías. Esta separación no es un sandbox: un agente con permisos sobre la principal todavía puede escribir en ella mediante otra ruta. El consumidor debe aplicar los permisos que necesite; véase [seguridad](SECURITY.md).
 

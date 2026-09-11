@@ -45,11 +45,11 @@ El UUID es local, no una identidad cloud compartida. Copiar `.kn/config.json` no
 ## Flujo de edición
 
 1. `init` captura los documentos iniciales. Un commit vacío interno permite abrir worktrees incluso si no hay documentos.
-2. `worktree add` observa cambios manuales de la principal, guarda una referencia `external_observation` y crea la sesión desde main.
-3. `commit` guarda documentos permitidos de la sesión. `log` omite versiones sin cambios documentales.
+2. `worktree add` observa cambios manuales de la principal, registra una referencia `external_observation` y crea la sesión desde main.
+3. `commit` registra una versión con los documentos permitidos de la sesión. `log` omite versiones sin cambios documentales.
 4. `worktree update` observa de nuevo la principal y usa merge de Git dentro de la sesión. Los conflictos permanecen ahí.
-5. `worktree finish` observa la principal y exige avance fast-forward desde ella hacia la sesión limpia; si divergen, pide actualizar. La sesión se conserva.
-6. `restore` guarda cambios pendientes, valida el objetivo y protege obstrucciones no versionadas antes del checkout de dos árboles; registra el resultado sin reescribir HEAD hacia atrás.
+5. `worktree finish` registra lo pendiente de la sesión (`pre_finish_snapshot`), observa la principal y exige avance fast-forward desde ella; si divergen, pide actualizar. La sesión se conserva. Es lo que una persona llama guardar: `commit` solo registra una versión dentro de la sesión.
+6. `restore` registra cambios pendientes, valida el objetivo y protege obstrucciones no versionadas antes del checkout de dos árboles; registra el resultado sin reescribir HEAD hacia atrás.
 
 Los documentos que siguen en la nube se reconocen por metadatos en [cloud.rs](crates/kn-core/src/cloud.rs) y, en cada llamada a `status` o `add`, se ocultan a Git con un archivo de exclusión temporal. La lista no se guarda: el directorio Git común lo comparten la principal y las sesiones, y una exclusión guardada ahí ocultaría en una sesión un documento nuevo del agente. En builds de depuración, `KN_TEST_CLOUD_ONLY` simula esos documentos por nombre para las regresiones. Si `init` falla, borra el historial que acababa de crear en KN_HOME.
 

@@ -9,13 +9,13 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | `init [--fresh]` | Inicializa; fresh asigna otra identidad, no convierte el historial anterior |
 | `status [--refresh]` | Cambios, conflictos, capacidades; refresh no disponible |
 | `diff [--patch] [--base\|--remote]` | Cambios desde HEAD; base/remote no disponibles |
-| `commit [-m mensaje]` | Guarda todos los documentos permitidos de la sesión; alias snapshot |
+| `commit [-m mensaje]` | Registra una versión con los documentos permitidos de la sesión; alias snapshot |
 | `log [--limit N] [--offset N]` | Versiones documentales, limit 1–1000, offset desde cero; alias history |
-| `restore v_<12 hex>` | Guarda antes los cambios y restaura dentro de la sesión |
+| `restore v_<12 hex>` | Registra antes los cambios y restaura dentro de la sesión |
 | `worktree add <nombre>` | Crea sesión bajo KN_HOME; alias session start |
 | `worktree list` | Lista sesiones conservadas; con porcelain incluye principal y registros Git |
 | `worktree update` | Integra la principal en la sesión actual |
-| `worktree finish` | Integra la sesión a la principal si puede avanzar fast-forward |
+| `worktree finish` | Registra lo pendiente (`recorded_document_count`) e integra la sesión a la principal si puede avanzar fast-forward |
 | `connect [proveedor]`, `pull`, `push` | Capacidad no disponible; no solicitan ni usan tokens |
 | `version`, `--version` | Versión del build |
 

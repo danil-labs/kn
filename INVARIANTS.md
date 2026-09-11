@@ -11,7 +11,7 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs). 
 | Las copias no operan silenciosamente sobre el historial de una ubicación todavía existente | `copies_moves_locks_and_invalid_input` |
 | Las lecturas no crean marcadores en documentos | `special_names_ignores_empty_folders_and_read_only_queries` |
 | Inspect no inicializa carpetas ni modifica documentos o estado | `inspect_unmanaged_folders_does_not_initialize_or_classify_code`, `inspect_is_read_only_even_after_manual_changes_and_a_move` |
-| Un enlace externo se reporta, pero no puede guardarse | `unsafe_symlink_is_reported_but_cannot_be_committed` |
+| Un enlace externo se reporta, pero no puede registrarse | `unsafe_symlink_is_reported_but_cannot_be_committed` |
 | Los cambios manuales son una base para el agente, no un impedimento para iniciar | `manual_documents_become_the_next_agent_sessions_baseline` |
 | Los conflictos de persona/agente permanecen en la sesión | `manual_edits_conflict_only_inside_the_agent_session` |
 | Una sesión antigua no escribe una principal reinicializada | `old_sessions_cannot_publish_to_a_reinitialized_primary` |
@@ -21,5 +21,6 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs). 
 | Los nombres nuevos conservan alias y las consultas separan JSON de bytes | `git_named_queries_and_aliases_support_service_integration` |
 | Un documento que sigue en la nube no bloquea el inicio, no entra en la sesión hasta descargarse y no se pisa al integrar | `cloud_only_documents_wait_without_blocking_or_being_deleted` |
 | Un init que falla no deja historiales huérfanos en KN_HOME | `a_failed_init_leaves_no_orphan_history` |
+| Integrar registra antes lo pendiente de la sesión | `finish_records_pending_edits_before_integrating` |
 
 Toda corrección de pérdida de datos requiere una regresión con documentos temporales y un control explícito de qué archivos deben sobrevivir. Las limitaciones que no tienen una prueba aparecen en [SECURITY.md](SECURITY.md) y [ARCHITECTURE.md](ARCHITECTURE.md), no se presentan como garantías.

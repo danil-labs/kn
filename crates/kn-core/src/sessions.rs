@@ -105,13 +105,14 @@ pub fn update(ws: &Workspace) -> Result<Value> {
 }
 pub fn finish(ws: &Workspace) -> Result<Value> {
     ws.require_session()?;
-    require_clean(&ws.git)?;
-    ops::check_safe(&ws.git)?;
     if ws.git.dir.join("MERGE_HEAD").exists() {
         return Err(Error::Conflict(
             "Termina la integración pendiente en la sesión.".into(),
         ));
     }
+    // Para quien trabaja en documentos, integrar es guardar: lo pendiente se registra aquí.
+    let (_, registrados, _) =
+        ops::commit(&ws.git, "Versión antes de integrar", "pre_finish_snapshot")?;
     let main = ws.primary()?;
     observe_external(&main)?;
     let tip = ws.git.head()?;
@@ -126,13 +127,14 @@ pub fn finish(ws: &Workspace) -> Result<Value> {
     main.run(&["merge", "--no-overwrite-ignore", "--ff-only", &tip])?;
     Ok(
         json!({"version_id": version(&tip), "session": ws.config.session,
+        "recorded_document_count": registrados,
         "message": "Versión integrada a la principal. La sesión se conserva; no se hizo ningún envío a la nube."}),
     )
 }
 fn require_clean(git: &Git) -> Result<()> {
     if !ops::changes(git)?.is_empty() {
         return Err(Error::Conflict(
-            "Hay documentos sin guardar. Guarda una versión en la sesión antes de integrar.".into(),
+            "Hay documentos sin versión registrada. Regístralos con kn commit y vuelve a intentarlo.".into(),
         ));
     }
     Ok(())
