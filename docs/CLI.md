@@ -17,7 +17,7 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | `worktree list` | Lista sesiones conservadas; con porcelain incluye principal y registros Git |
 | `worktree update` | Integra la principal en la sesión actual |
 | `worktree finish` | Registra lo pendiente (`recorded_document_count`) e integra la sesión a la principal si puede avanzar fast-forward |
-| `cloud fetch [--timeout-secs N] [--max-bytes N]` | Descarga los documentos de la principal que siguen en la nube leyéndolos; no crea versiones |
+| `cloud fetch [--all] [--timeout-secs N] [--max-bytes N] [--progress] [--retry-failed]` | Descarga los documentos de la principal que siguen en la nube leyéndolos y recuerda los que fallan; no crea versiones |
 | `connect [proveedor]`, `pull`, `push` | Capacidad no disponible; no solicitan ni usan tokens |
 | `version`, `--version` | Versión del build |
 
@@ -67,7 +67,7 @@ Los comandos de aplicación aceptan `--json`. Un único objeto se escribe a stdo
 }
 ```
 
-[JSON Schema del envelope](schema/envelope-v1.json). `data` depende del comando y todavía no tiene un esquema publicado por operación. El mensaje humano es explicativo y no debe parsearse. En errores, data es null; cada error contiene `code`, `message`, `retryable` y `suggested_next_action`. Solo WORKSPACE_BUSY se marca retryable actualmente.
+[JSON Schema del envelope](schema/envelope-v1.json). `data` depende del comando y todavía no tiene un esquema publicado por operación. El mensaje humano es explicativo y no debe parsearse. En errores, data es null; cada error contiene `code`, `message`, `retryable` y `suggested_next_action`. Solo WORKSPACE_BUSY y CLOUD_FETCH_BUSY se marcan retryable.
 
 | Exit | status | Interpretación |
 | --- | --- | --- |
@@ -84,6 +84,7 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 | UNSUPPORTED_CAPABILITY | Cloud u otra operación no implementada |
 | NOT_A_WORKSPACE | No se descubrió una carpeta kn; también, una principal registrada después de moverla |
 | WORKSPACE_BUSY | Se agotó la espera de lock |
+| CLOUD_FETCH_BUSY | Otra `cloud fetch` del mismo historial está en curso; esta no espera |
 | WORKSPACE_COPIED | Un marcador anterior cuya identidad está registrada o ubicada en otra carpeta todavía existente |
 | WORKSPACE_IDENTITY_CHANGED | Una sesión cuya principal tiene ahora otra identidad, registrada o en su marcador |
 | SESSION_REQUIRED | Escritura de documentos fuera de una sesión |
@@ -136,6 +137,8 @@ Si `.kn` contiene cualquier otro archivo, o un marcador de otro historial, devue
 
 `init`, `status` y `worktree add` devuelven `cloud_only`: las rutas relativas, con `/`, de los documentos que el proveedor muestra pero todavía no descargó. En macOS se reconocen por `SF_DATALESS`; en Windows, por los atributos `OFFLINE`, `RECALL_ON_OPEN` o `RECALL_ON_DATA_ACCESS`. En Linux la lista siempre está vacía.
 
+`status` también devuelve `cloud_only_bytes`, la suma del tamaño lógico de esos documentos, y `cloud_failed`, los de `cloud_only` cuya última descarga falló. El tamaño sale de los metadatos: leerlo no pide la descarga. En una sesión `cloud_failed` siempre está vacía.
+
 Leer uno de esos documentos obligaría a descargarlo, y sin el cliente de sincronización la lectura se agota. Por eso Git no los lista ni los guarda: no aparecen en `local_changes`, `clean` no los cuenta y no entran en la versión ni en las sesiones. Cuando el proveedor los descarga, la siguiente observación los versiona. `worktree finish` nunca los pisa: si la sesión trae un documento en la misma ruta, devuelve CONFLICT.
 
 Límite sin prueba: un documento ya versionado que el proveedor reemplaza por otra versión sin descargarla todavía se lee al observarlo.
@@ -143,6 +146,8 @@ Límite sin prueba: un documento ya versionado que el proveedor reemplaza por ot
 ### Lo descargado desde la última observación
 
 Cada vez que kn registra una versión en la principal (el commit inicial de `init` y cada observación de `worktree add`, `update` o `finish`), guarda la lista `cloud_only` de ese momento en `$KN_HOME/repos/<workspace_id>/cloud-pending.json`, con escritura atómica. Una observación sin cambios también la actualiza. Nunca se escribe en la carpeta de documentos ni desde una sesión.
+
+El registro, en schema 2, guarda también `failed: [{path, reason, at}]`: los documentos cuya descarga falló, con el motivo y la hora UTC en RFC 3339. kn lee también el schema 1, sin `failed`; un kn anterior no lee el schema 2. Toda escritura del registro toma `cloud-pending.lock`, en la misma carpeta.
 
 `status` en la principal devuelve `downloaded_since_last_observation`: las rutas de esa lista que ya no siguen en la nube, existen y Git ve como documentos nuevos, es decir, que todavía no están en HEAD ni ignorados. `status` solo lee el registro. En una sesión la lista siempre está vacía. `worktree add` devuelve la misma lista para la principal: son los documentos que esa observación acaba de versionar.
 
@@ -154,10 +159,26 @@ Límite: la clasificación depende del registro. Un documento que el proveedor d
 
 `cloud fetch` descarga los documentos de la principal que siguen en la nube. Se puede ejecutar desde la principal o desde una sesión; siempre actúa sobre la principal. Lee cada documento entero, uno por uno, del menor al mayor tamaño aparente, en un hilo con su propio límite de espera.
 
+Sin `--all` hace una pasada sobre lo pendiente al empezar. Con `--all` trabaja por tandas de hasta 32 documentos y vuelve a recorrer la carpeta entre tandas, hasta que no queda nada que intentar: todo lo pendiente ya se leyó o falló. Cada documento se intenta una vez por ejecución.
+
 | Opción | Efecto |
 | --- | --- |
 | `--timeout-secs N` | Segundos de espera por documento; 60 por defecto, mínimo 1 |
-| `--max-bytes N` | Se detiene antes de superar N bytes, sumando el tamaño aparente de cada documento intentado; los restantes van a `skipped_budget`. Con 0 no lee ninguno, tampoco los de tamaño aparente cero: abrirlos ya pide la descarga |
+| `--max-bytes N` | Tope total de la ejecución, también con `--all`. Se detiene antes de superar N bytes, sumando el tamaño aparente de cada documento intentado; los restantes van a `skipped_budget`. Con 0 no lee ninguno, tampoco los de tamaño aparente cero: abrirlos ya pide la descarga. Sin la opción no hay tope |
+| `--all` | Sigue por tandas hasta que no quede nada que intentar |
+| `--progress` | Escribe en stderr una línea JSON por documento intentado; stdout conserva el único envelope |
+| `--retry-failed` | Vuelve a intentar los documentos cuya descarga falló antes |
+
+Cada línea de `--progress`, con o sin `--all`, es un objeto:
+
+| Campo | Contenido |
+| --- | --- |
+| `path` | Documento intentado |
+| `outcome` | `fetched` o `failed` |
+| `bytes` | Bytes leídos; 0 si falló |
+| `fetched_count`, `failed_count` | Totales de esta ejecución |
+| `remaining_count`, `bytes_remaining` | Documentos, y su tamaño aparente, que esta ejecución todavía puede intentar según el último recorrido; no cuenta los fallos recordados que omite |
+| `bytes_fetched` | Bytes leídos en esta ejecución |
 
 `data` contiene:
 
@@ -169,7 +190,11 @@ Límite: la clasificación depende del registro. Un documento que el proveedor d
 | `remaining` | Rutas que siguen en la nube al terminar |
 | `bytes_fetched` | Bytes leídos de los documentos de `fetched` |
 
-La salida humana es una línea de resumen. Un documento que falla es un resultado: el comando termina con 0. Una carpeta sin kn u otro error operativo usa el envelope de error habitual. `fetch` no crea versiones ni actualiza el registro: la siguiente observación versiona lo descargado como `cloud_download`. No mantiene el lock de kn mientras lee, así que otras operaciones de kn pueden correr en paralelo.
+Los fallos se recuerdan en el registro. Las ejecuciones siguientes los omiten, salvo con `--retry-failed`: siguen en `remaining`, y `status` los lista en `cloud_failed`. Un fallo se olvida cuando el documento se descarga, deja de estar en la nube o desaparece.
+
+Dos `cloud fetch` del mismo historial no corren a la vez, tampoco una desde la principal y otra desde una sesión. La primera toma `$KN_HOME/repos/<workspace_id>/cloud-fetch.lock`; la segunda termina enseguida con CLOUD_FETCH_BUSY.
+
+La salida humana es una línea de resumen. Un documento que falla es un resultado: el comando termina con 0. Una carpeta sin kn u otro error operativo usa el envelope de error habitual. `fetch` no crea versiones y del registro solo escribe `failed`: la siguiente observación versiona lo descargado como `cloud_download`. No mantiene el lock del espacio mientras lee, así que otras operaciones de kn pueden correr en paralelo.
 
 Una lectura agotada no se puede cancelar. Su hilo queda suelto y termina con el proceso; el proveedor puede seguir descargando ese documento. Sin verificar: que el proceso salga de inmediato si el sistema mantiene la lectura bloqueada dentro del kernel.
 

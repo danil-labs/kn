@@ -96,9 +96,18 @@ enum Cloud {
         /// Segundos de espera por documento
         #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..))]
         timeout_secs: u64,
-        /// Detenerse antes de superar estos bytes, por tamaño aparente
+        /// Detenerse antes de superar estos bytes en total, por tamaño aparente
         #[arg(long)]
         max_bytes: Option<u64>,
+        /// Seguir por tandas hasta que no quede nada pendiente que intentar
+        #[arg(long)]
+        all: bool,
+        /// Escribir en stderr una línea JSON por documento intentado
+        #[arg(long)]
+        progress: bool,
+        /// Volver a intentar los documentos cuya descarga falló antes
+        #[arg(long)]
+        retry_failed: bool,
     },
 }
 #[derive(Subcommand)]
@@ -186,16 +195,36 @@ fn execute(cli: &Cli) -> Result<Value> {
     }
     let cwd = directory(cli)?;
     if let Commands::Cloud {
-        command: Cloud::Fetch {
-            timeout_secs,
-            max_bytes,
-        },
+        command:
+            Cloud::Fetch {
+                timeout_secs,
+                max_bytes,
+                all,
+                progress,
+                retry_failed,
+            },
     } = &cli.command
     {
+        let show = *progress;
+        // stdout lleva un solo envelope; el progreso va aparte, una línea por documento.
+        let mut report = |line: &Value| -> Result<()> {
+            if show {
+                let mut err = std::io::stderr().lock();
+                serde_json::to_writer(&mut err, line)?;
+                err.write_all(b"\n")?;
+                err.flush()?;
+            }
+            Ok(())
+        };
         return kn_core::cloud::fetch(
             &cwd,
-            std::time::Duration::from_secs(*timeout_secs),
-            *max_bytes,
+            &kn_core::cloud::Fetch {
+                timeout: std::time::Duration::from_secs(*timeout_secs),
+                max_bytes: *max_bytes,
+                all: *all,
+                retry_failed: *retry_failed,
+            },
+            &mut report,
         );
     }
     if let Commands::Migrate = cli.command {

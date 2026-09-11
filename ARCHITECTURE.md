@@ -40,7 +40,9 @@ Límite sin verificar: en macOS, `/usr/bin/git` es un lanzador de las Command Li
 | `$KN_HOME/repos/<uuid>/` | Objetos, referencias, índice principal y registros Git de worktrees |
 | `$KN_HOME/repos/<uuid>/location.json` | Última ubicación registrada de la principal |
 | `$KN_HOME/repos/<uuid>/kn.lock` | Coordinación de operaciones kn del espacio |
-| `$KN_HOME/repos/<uuid>/cloud-pending.json` | Documentos de la principal que seguían en la nube en su última versión |
+| `$KN_HOME/repos/<uuid>/cloud-pending.json` | Schema 2: documentos de la principal que seguían en la nube en su última versión y descargas que fallaron |
+| `$KN_HOME/repos/<uuid>/cloud-pending.lock` | Coordina las escrituras de `cloud-pending.json` |
+| `$KN_HOME/repos/<uuid>/cloud-fetch.lock` | Impide dos `cloud fetch` a la vez sobre el mismo historial |
 | `$KN_HOME/sessions/<uuid>/<nombre>/` | Documentos de sesión, gitfile y marcador `.kn/config.json` (schema 2, UUID y nombre de sesión) |
 | `<principal>/.kn/config.json`, `<principal>/.kn/kn.lock` | Solo en principales inicializadas antes del registro; `kn migrate` los quita |
 
@@ -80,7 +82,7 @@ Límites:
 
 Los documentos que siguen en la nube se reconocen por metadatos en [cloud.rs](crates/kn-core/src/cloud.rs) y, en cada llamada a `status` o `add`, se ocultan a Git con un archivo de exclusión temporal. La lista no se guarda: el directorio Git común lo comparten la principal y las sesiones, y una exclusión guardada ahí ocultaría en una sesión un documento nuevo del agente. En builds de depuración, `KN_TEST_CLOUD_ONLY` simula esos documentos por nombre para las regresiones. Si `init` falla, borra el historial que acababa de crear en KN_HOME.
 
-Esa exclusión no se guarda, pero sí la lista de la principal: cada versión que kn registra ahí escribe `cloud-pending.json` junto al historial. Con ella, `status` informa `downloaded_since_last_observation` sin escribir nada, y la observación versiona primero lo descargado (`cloud_download`) y después lo demás (`external_observation`). `cloud fetch` descarga lo pendiente leyendo cada documento con un límite de espera; no crea versiones ni toma el lock durante las lecturas.
+Esa exclusión no se guarda, pero sí la lista de la principal: cada versión que kn registra ahí escribe `cloud-pending.json` junto al historial. Con ella, `status` informa `downloaded_since_last_observation` sin escribir nada, y la observación versiona primero lo descargado (`cloud_download`) y después lo demás (`external_observation`). `cloud fetch` descarga lo pendiente leyendo cada documento con un límite de espera, por tandas con `--all`, y recuerda en el registro qué falló. No crea versiones ni toma el lock del espacio durante las lecturas: el registro tiene su propio lock, y otro impide dos descargas del mismo historial a la vez. El bucle, la memoria de fallos y los tamaños son de kn; quien lo lanza solo decide cuándo y muestra el progreso.
 
 Las observaciones no conocen al autor externo. Los commits usan la identidad técnica `kn <kn@local>` y un trailer `Kn-Reason`. Los snapshots sin cambios no crean commits adicionales, salvo que Git deba terminar una integración.
 

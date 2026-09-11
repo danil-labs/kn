@@ -32,6 +32,11 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs), 
 | Lo descargado de la nube queda en su propia versión `cloud_download`, separada de los cambios manuales; una sesión no escribe el registro | `cloud_downloads_have_their_own_version` |
 | `cloud fetch` lee los pendientes de la principal, respeta `--max-bytes` y no crea versiones | `cloud_fetch_reads_pending_documents_without_versions` |
 | `cloud fetch --max-bytes 0` no lee ningún documento, tampoco los de tamaño aparente cero | `cloud_fetch_with_a_zero_budget_reads_nothing` |
+| `status` suma el tamaño lógico de lo que sigue en la nube sin descargarlo e informa los fallos recordados; un registro del schema 1 se sigue leyendo | `cloud_fetch_all_reports_progress_and_remembers_failures` |
+| `cloud fetch --all` intenta cada documento una vez por ejecución, por tandas; el progreso va a stderr, una línea por documento, sin mezclarse con el envelope | `cloud_fetch_all_reports_progress_and_remembers_failures` |
+| Un fallo no se reintenta sin `--retry-failed` y se olvida cuando el documento se descarga o desaparece | `cloud_fetch_all_reports_progress_and_remembers_failures` |
+| `--max-bytes` es un tope total también con `--all` | `cloud_fetch_all_caps_the_total_budget_across_batches` |
+| Dos descargas del mismo historial no corren a la vez: la segunda termina con CLOUD_FETCH_BUSY | `a_second_cloud_fetch_on_the_same_history_is_refused` |
 | Una lectura que se agota se reporta como `timeout` y no retiene a quien llama | `a_blocked_read_times_out_and_leaves_the_caller_free` |
 | Todo proceso se crea con `git::process`, que en Windows usa `CREATE_NO_WINDOW` | `every_process_is_built_through_process` |
 
