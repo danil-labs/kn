@@ -12,6 +12,8 @@
 - Documentos que siguen en la nube: `init`, las observaciones y las sesiones continúan sin descargarlos, los reportan en `cloud_only` y los versionan cuando el proveedor los descarga.
 - Un `init` que falla ya no deja un historial huérfano en KN_HOME por cada reintento.
 - `worktree finish` registra lo pendiente de la sesión antes de integrar y lo cuenta en `recorded_document_count`. «Guardar» queda para integrar; `commit` registra una versión dentro de la sesión.
+- `KN_GIT` elige el ejecutable git y gana sobre PATH; una ruta inválida falla en vez de caer a PATH. Sin Git, el error `GIT_MISSING` nombra el remedio de cada sistema, e `init` falla antes de crear `.kn/` o KN_HOME.
+- En Windows, los procesos que kn lanza usan `CREATE_NO_WINDOW`: lanzado sin consola, como lo hace Terminus, ya no abre una ventana por cada llamada a Git.
 - Licencia doble: MIT o Apache-2.0, a elección de quien lo use (`LICENSE-MIT`, `LICENSE-APACHE`).
 
 ### Límites de compatibilidad

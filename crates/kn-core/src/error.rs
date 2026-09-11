@@ -24,6 +24,8 @@ pub enum Error {
     Unsafe(String),
     #[error("Falló Git: {0}")]
     Git(String),
+    #[error("{0}")]
+    GitMissing(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -42,6 +44,7 @@ impl Error {
             Self::Conflict(_) => "CONFLICT",
             Self::Unsafe(_) => "UNSAFE_PATH",
             Self::Git(_) => "GIT_FAILED",
+            Self::GitMissing(_) => "GIT_MISSING",
             Self::Io(_) => "IO_ERROR",
             Self::Json(_) => "INVALID_STATE",
         }
@@ -90,6 +93,7 @@ impl Envelope {
                         Error::Busy => "Vuelve a intentar cuando termine la otra operación.",
                         Error::Copied => "Ejecuta kn init --fresh en la copia.",
                         Error::SessionRequired => "Ejecuta kn session start <nombre>.",
+                        Error::GitMissing(_) => "Instala Git o define KN_GIT con la ruta absoluta de un ejecutable git.",
                         _ => "Consulta kn --help y kn status antes de volver a intentar.",
                     }}),
                 );

@@ -50,9 +50,19 @@ Copiar los documentos no copia el historial. Una copia con la misma identidad se
 
 `.gitignore` se versiona y Git aplica sus exclusiones. Archivos ignorados no tienen respaldo en el historial. También se excluyen `.kn/` anidadas, basura del sistema y temporales de Office. Las carpetas vacías se reportan, pero **no se versionan**: no se crean marcadores. Los archivos se preservan como bytes, sin filtros ni conversión de finales de línea. Git puede combinar texto; documentos binarios en conflicto requieren elegir o editar una versión con su aplicación.
 
+## Qué Git usa kn
+
+kn elige el ejecutable una vez por proceso, en este orden:
+
+1. `KN_GIT`, si está definida: la ruta absoluta de un ejecutable git. Si la ruta es relativa, no existe o no es un archivo, kn falla con `GIT_MISSING`; no busca en PATH.
+2. El primer `git` de PATH (`git.exe` en Windows). Las entradas relativas de PATH se ignoran.
+3. Si no hay ninguno, falla con `GIT_MISSING` y un remedio por sistema: `xcode-select --install` en macOS, el gestor de paquetes en Linux, Git for Windows en Windows; en todos, definir KN_GIT.
+
+`init` comprueba Git antes de crear `.kn/` o KN_HOME. kn no instala Git. Una aplicación que empaqueta su propio git, como Terminus, lo pasa en KN_GIT.
+
 ## Alcance y verificación
 
-Requiere Rust 1.89+ y Git en PATH. Se verifica localmente con:
+Requiere Rust 1.89+ y Git (véase la sección anterior). Se verifica localmente con:
 
 ```sh
 cargo fmt --check
