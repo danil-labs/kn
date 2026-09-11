@@ -1474,6 +1474,273 @@ fn cloud_fetch_with_a_zero_budget_reads_nothing() {
     assert_eq!(one["skipped_budget"], json!([lleno]));
 }
 
+/// Mientras vive, leer el documento falla, como una descarga que el proveedor no completa.
+struct Unreadable {
+    #[cfg(unix)]
+    path: PathBuf,
+    #[cfg(windows)]
+    _handle: fs::File,
+}
+impl Unreadable {
+    fn new(path: &Path) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+            Self {
+                path: path.to_path_buf(),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let handle = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(path)
+                .unwrap();
+            Self { _handle: handle }
+        }
+    }
+}
+impl Drop for Unreadable {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+}
+impl Fixture {
+    /// `cloud fetch --progress`: el envelope de stdout y cada línea de stderr.
+    fn fetch_progress(&self, args: &[&str], nube: &str) -> (Value, Vec<Value>) {
+        let out = Command::new(env!("CARGO_BIN_EXE_kn"))
+            .current_dir(&self.main)
+            .env("KN_HOME", &self.home)
+            .env(NUBE, nube)
+            .args(["cloud", "fetch", "--progress", "--json"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let envelope = serde_json::from_slice(&out.stdout).expect("un solo envelope en stdout");
+        let lines = String::from_utf8(out.stderr)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        (envelope, lines)
+    }
+}
+
+#[test]
+fn cloud_fetch_all_reports_progress_and_remembers_failures() {
+    let f = Fixture::new();
+    fs::create_dir(f.main.join("lote")).unwrap();
+    let mut nube = vec![];
+    let mut total = 0;
+    for i in 0..40 {
+        let rel = format!("lote/doc{i:02}.pdf");
+        fs::write(f.main.join(&rel), "x".repeat(i + 1)).unwrap();
+        total += i + 1;
+        nube.push(rel);
+    }
+    let roto_contenido = "sin descargar\n";
+    fs::write(f.main.join("roto.pdf"), roto_contenido).unwrap();
+    nube.push("roto.pdf".into());
+    let lista = nube.join("\n");
+    let env = [(NUBE, lista.as_str())];
+    let init = f.run_env(&f.main, &["init"], 0, &env);
+    let record = cloud_record(&f, &init);
+    // Un registro del schema 1, sin `failed`, se sigue leyendo.
+    fs::write(
+        &record,
+        json!({"schema_version": 1, "cloud_only": nube}).to_string(),
+    )
+    .unwrap();
+    let status = f.run_env(&f.main, &["status"], 0, &env)["data"].clone();
+    assert_eq!(status["cloud_only"].as_array().unwrap().len(), 41);
+    assert_eq!(status["cloud_only_bytes"], total + roto_contenido.len());
+    assert_eq!(status["cloud_failed"], json!([]));
+
+    let roto = Unreadable::new(&f.main.join("roto.pdf"));
+    let (out, lines) = f.fetch_progress(&["--all", "--timeout-secs", "5"], &lista);
+    let data = &out["data"];
+    assert_eq!(data["fetched"].as_array().unwrap().len(), 40);
+    assert_eq!(data["failed"].as_array().unwrap().len(), 1);
+    assert_eq!(data["failed"][0]["path"], "roto.pdf");
+    assert_eq!(data["bytes_fetched"], total);
+    assert_eq!(lines.len(), 41, "una línea por documento");
+    let mut seen: Vec<_> = lines.iter().map(|l| l["path"].to_string()).collect();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 41, "ninguno se intenta dos veces entre tandas");
+    for line in &lines {
+        for key in [
+            "path",
+            "outcome",
+            "bytes",
+            "fetched_count",
+            "failed_count",
+            "remaining_count",
+            "bytes_fetched",
+            "bytes_remaining",
+        ] {
+            assert!(line.get(key).is_some(), "{key}: {line}");
+        }
+    }
+    let last = lines.last().unwrap();
+    assert_eq!(last["fetched_count"], 40);
+    assert_eq!(last["failed_count"], 1);
+    assert_eq!(last["remaining_count"], 0);
+    assert_eq!(last["bytes_remaining"], 0);
+    assert_eq!(last["bytes_fetched"], total);
+    let fallo = lines.iter().find(|l| l["path"] == "roto.pdf").unwrap();
+    assert_eq!(fallo["outcome"], "failed");
+    assert_eq!(fallo["bytes"], 0);
+
+    let remembered: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert_eq!(remembered["schema_version"], 2);
+    assert_eq!(remembered["failed"][0]["path"], "roto.pdf");
+    assert!(
+        remembered["failed"][0]["reason"]
+            .as_str()
+            .is_some_and(|r| !r.is_empty())
+    );
+    assert!(
+        remembered["failed"][0]["at"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z')
+    );
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &env)["data"]["cloud_failed"],
+        json!(["roto.pdf"])
+    );
+
+    let again = f.run_env(&f.main, &["cloud", "fetch"], 0, &env)["data"].clone();
+    assert_eq!(
+        again["failed"],
+        json!([]),
+        "sin --retry-failed no se reintenta"
+    );
+    assert!(
+        !again["fetched"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("roto.pdf"))
+    );
+    assert!(
+        again["remaining"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("roto.pdf"))
+    );
+
+    drop(roto);
+    let retried =
+        f.run_env(&f.main, &["cloud", "fetch", "--retry-failed"], 0, &env)["data"].clone();
+    assert!(
+        retried["fetched"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("roto.pdf"))
+    );
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &env)["data"]["cloud_failed"],
+        json!([])
+    );
+
+    // Un fallo se olvida cuando el documento desaparece.
+    let roto = Unreadable::new(&f.main.join("roto.pdf"));
+    f.run_env(&f.main, &["cloud", "fetch", "--all"], 0, &env);
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &env)["data"]["cloud_failed"],
+        json!(["roto.pdf"])
+    );
+    drop(roto);
+    fs::remove_file(f.main.join("roto.pdf")).unwrap();
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &env)["data"]["cloud_failed"],
+        json!([])
+    );
+    f.run_env(&f.main, &["cloud", "fetch"], 0, &env);
+    let settled: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert_eq!(settled["failed"], json!([]));
+}
+
+#[test]
+fn cloud_fetch_all_caps_the_total_budget_across_batches() {
+    let f = Fixture::new();
+    fs::create_dir(f.main.join("lote")).unwrap();
+    let nube: Vec<String> = (0..40).map(|i| format!("lote/doc{i:02}.pdf")).collect();
+    for rel in &nube {
+        fs::write(f.main.join(rel), "x").unwrap();
+    }
+    let lista = nube.join("\n");
+    let env = [(NUBE, lista.as_str())];
+    f.run_env(&f.main, &["init"], 0, &env);
+    let capped = f.run_env(
+        &f.main,
+        &["cloud", "fetch", "--all", "--max-bytes", "35"],
+        0,
+        &env,
+    )["data"]
+        .clone();
+    assert_eq!(capped["fetched"].as_array().unwrap().len(), 35);
+    assert_eq!(capped["skipped_budget"].as_array().unwrap().len(), 5);
+    assert_eq!(capped["bytes_fetched"], 35);
+
+    // Sin --all también hay progreso, y el presupuesto corta la pasada.
+    let (out, lines) = f.fetch_progress(&["--max-bytes", "3"], &lista);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0]["fetched_count"], 1);
+    assert_eq!(lines[2]["remaining_count"], 37);
+    assert_eq!(out["data"]["skipped_budget"].as_array().unwrap().len(), 37);
+}
+
+#[test]
+fn a_second_cloud_fetch_on_the_same_history_is_refused() {
+    use fs2::FileExt;
+    let f = Fixture::new();
+    fs::write(f.main.join("informe.pdf"), "remoto\n").unwrap();
+    let env = [(NUBE, "informe.pdf")];
+    let init = f.run_env(&f.main, &["init"], 0, &env);
+    let lock_path = f
+        .home
+        .join("repos")
+        .join(init["data"]["workspace_id"].as_str().unwrap())
+        .join("cloud-fetch.lock");
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    let busy = f.run_env(&f.main, &["cloud", "fetch"], 1, &env);
+    assert_eq!(busy["errors"][0]["code"], "CLOUD_FETCH_BUSY");
+    assert_eq!(busy["errors"][0]["retryable"], true);
+    let s = session_path(&f.run_env(&f.main, &["worktree", "add", "agente"], 0, &env));
+    assert_eq!(
+        f.run_env(&s, &["cloud", "fetch"], 1, &env)["errors"][0]["code"],
+        "CLOUD_FETCH_BUSY",
+        "desde una sesión es el mismo historial"
+    );
+    drop(lock);
+    assert_eq!(
+        f.run_env(&f.main, &["cloud", "fetch"], 0, &env)["data"]["fetched"],
+        json!(["informe.pdf"])
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn absolute_symlinks_cannot_escape_a_new_sessions_isolation() {

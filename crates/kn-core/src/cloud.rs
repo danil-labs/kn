@@ -5,31 +5,86 @@
 //!
 //! La principal recuerda, junto a su historial en KN_HOME, qué seguía en la nube
 //! en su última versión: así distingue lo descargado de lo editado por alguien.
+//! También recuerda qué descargas fallaron, para no reintentarlas en cada pasada.
 
 use crate::{
     error::{Error, Result},
     git::{Git, git_path},
     ops::Change,
-    workspace::{Workspace, atomic_json},
+    workspace::{Workspace, acquire_lock, atomic_json},
 };
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
-    fs,
-    io::Write,
+    fs::{self, File, OpenOptions},
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const RECORD: &str = "cloud-pending.json";
+const RECORD_LOCK: &str = "cloud-pending.lock";
+const FETCH_LOCK: &str = "cloud-fetch.lock";
+/// Documentos por tanda con `--all`; entre tandas se vuelve a recorrer la carpeta.
+const BATCH: usize = 32;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     schema_version: u32,
     cloud_only: Vec<String>,
+    /// Ausente en el schema 1.
+    #[serde(default)]
+    failed: Vec<Remembered>,
+}
+
+/// Un documento cuya descarga falló. Las descargas siguientes lo omiten.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Remembered {
+    path: String,
+    reason: String,
+    at: String,
+}
+
+fn load(common: &Path) -> Result<Record> {
+    let bytes = match fs::read(common.join(RECORD)) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Ok(Record {
+                schema_version: 2,
+                cloud_only: vec![],
+                failed: vec![],
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let record: Record = serde_json::from_slice(&bytes)?;
+    if !matches!(record.schema_version, 1 | 2) {
+        return Err(Error::Invalid(format!(
+            "El registro de documentos en la nube usa un formato desconocido: {RECORD}."
+        )));
+    }
+    Ok(record)
+}
+
+/// Lee, cambia y escribe el registro bajo su propio lock: `fetch` lo actualiza sin
+/// el lock del espacio, mientras una observación puede estar escribiéndolo.
+fn update(common: &Path, change: impl FnOnce(&mut Record)) -> Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(common.join(RECORD_LOCK))?;
+    let _guard = acquire_lock(file, false)?;
+    let mut record = load(common)?;
+    change(&mut record);
+    record.schema_version = 2;
+    atomic_json(&common.join(RECORD), &record)
 }
 
 /// Guarda lo que seguía en la nube al registrar una versión de la principal.
@@ -38,28 +93,30 @@ pub fn remember(git: &Git, paths: &[String]) -> Result<()> {
     if !git.is_primary() {
         return Ok(());
     }
-    atomic_json(
-        &git.common.join(RECORD),
-        &Record {
-            schema_version: 1,
-            cloud_only: paths.to_vec(),
-        },
-    )
+    let pending: BTreeSet<&str> = paths.iter().map(String::as_str).collect();
+    update(&git.common, |record| {
+        // Un fallo se olvida cuando el documento ya no sigue en la nube.
+        record.failed.retain(|f| pending.contains(f.path.as_str()));
+        record.cloud_only = paths.to_vec();
+    })
 }
 
 fn recorded(git: &Git) -> Result<BTreeSet<String>> {
-    let bytes = match fs::read(git.common.join(RECORD)) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let record: Record = serde_json::from_slice(&bytes)?;
-    if record.schema_version != 1 {
-        return Err(Error::Invalid(format!(
-            "El registro de documentos en la nube usa un formato desconocido: {RECORD}."
-        )));
+    Ok(load(&git.common)?.cloud_only.into_iter().collect())
+}
+
+/// Los documentos de `cloud_only` cuya última descarga falló. Solo lee.
+pub fn failed(git: &Git, cloud_only: &[String]) -> Result<Vec<String>> {
+    if !git.is_primary() {
+        return Ok(vec![]);
     }
-    Ok(record.cloud_only.into_iter().collect())
+    let pending: BTreeSet<&str> = cloud_only.iter().map(String::as_str).collect();
+    Ok(load(&git.common)?
+        .failed
+        .into_iter()
+        .map(|f| f.path)
+        .filter(|path| pending.contains(path.as_str()))
+        .collect())
 }
 
 /// Lo que seguía en la nube en la última versión de la principal y Git ya ve como
@@ -82,55 +139,121 @@ struct Failure {
     reason: String,
 }
 
+/// Opciones de `cloud fetch`.
+pub struct Fetch {
+    pub timeout: Duration,
+    pub max_bytes: Option<u64>,
+    pub all: bool,
+    pub retry_failed: bool,
+}
+
 /// Descarga los documentos pendientes de la principal leyéndolos enteros, del más
 /// pequeño al más grande. No crea versiones: la siguiente observación las crea.
-pub fn fetch(start: &Path, timeout: Duration, max_bytes: Option<u64>) -> Result<Value> {
-    // Las lecturas pueden tardar minutos; el lock se suelta antes de empezar.
-    let root = {
+/// Con `all` sigue por tandas hasta que no quede nada que intentar; cada documento
+/// se intenta una vez por ejecución. `progress` recibe una línea por documento.
+pub fn fetch(
+    start: &Path,
+    options: &Fetch,
+    progress: &mut dyn FnMut(&Value) -> Result<()>,
+) -> Result<Value> {
+    // Las lecturas pueden tardar minutos; el lock del espacio se suelta antes de empezar.
+    let main = {
         let ws = Workspace::open(start)?;
         if ws.config.session.is_some() {
-            ws.primary()?.root
+            ws.primary()?
         } else {
-            ws.git.root.clone()
+            ws.git.clone()
         }
     };
-    let mut failed = vec![];
-    let mut queue = vec![];
-    for rel in pending(&root)? {
-        match fs::symlink_metadata(native(&root, &rel)) {
-            Ok(meta) => queue.push((meta.len(), rel)),
-            Err(e) => failed.push(Failure {
-                path: rel,
-                reason: e.to_string(),
-            }),
-        }
-    }
-    queue.sort();
+    let (root, common) = (main.root, main.common);
+    let _fetching = fetch_lock(&common)?;
+    let remembered: BTreeSet<String> = load(&common)?.failed.into_iter().map(|f| f.path).collect();
+    let mut attempted = BTreeSet::new();
     let mut fetched = vec![];
+    let mut failed = vec![];
     let mut skipped_budget = vec![];
     let mut bytes_fetched: u64 = 0;
     let mut spent: u64 = 0;
-    for (size, rel) in queue {
-        // Con presupuesto cero no se lee nada: abrir un documento de tamaño aparente
-        // cero también pide su descarga al proveedor.
-        if !skipped_budget.is_empty()
-            || max_bytes.is_some_and(|max| max == 0 || spent.saturating_add(size) > max)
-        {
-            skipped_budget.push(rel);
-            continue;
+    'run: loop {
+        let mut queue: Vec<(u64, String)> = pending_sized(&root)?
+            .into_iter()
+            .filter(|(rel, _)| {
+                !attempted.contains(rel) && (options.retry_failed || !remembered.contains(rel))
+            })
+            .map(|(rel, size)| (size, rel))
+            .collect();
+        if queue.is_empty() {
+            break;
         }
-        spent = spent.saturating_add(size);
-        match read_fully(native(&root, &rel), timeout) {
-            Ok(bytes) => {
-                bytes_fetched = bytes_fetched.saturating_add(bytes);
-                fetched.push(rel);
+        queue.sort();
+        let mut remaining_count = queue.len();
+        let mut bytes_remaining = queue
+            .iter()
+            .fold(0_u64, |total, (size, _)| total.saturating_add(*size));
+        let batch = if options.all { BATCH } else { queue.len() };
+        let mut queue = queue.into_iter();
+        for _ in 0..batch {
+            let Some((size, rel)) = queue.next() else {
+                break;
+            };
+            // Con presupuesto cero no se lee nada: abrir un documento de tamaño aparente
+            // cero también pide su descarga al proveedor.
+            if options
+                .max_bytes
+                .is_some_and(|max| max == 0 || spent.saturating_add(size) > max)
+            {
+                skipped_budget.push(rel);
+                skipped_budget.extend(queue.map(|(_, rel)| rel));
+                break 'run;
             }
-            Err(reason) => failed.push(Failure { path: rel, reason }),
+            spent = spent.saturating_add(size);
+            remaining_count -= 1;
+            bytes_remaining = bytes_remaining.saturating_sub(size);
+            attempted.insert(rel.clone());
+            let (outcome, bytes) = match read_fully(native(&root, &rel), options.timeout) {
+                Ok(bytes) => {
+                    bytes_fetched = bytes_fetched.saturating_add(bytes);
+                    fetched.push(rel.clone());
+                    ("fetched", bytes)
+                }
+                Err(reason) => {
+                    remember_failure(&common, &rel, &reason)?;
+                    failed.push(Failure {
+                        path: rel.clone(),
+                        reason,
+                    });
+                    ("failed", 0)
+                }
+            };
+            progress(&json!({"path": rel, "outcome": outcome, "bytes": bytes,
+                "fetched_count": fetched.len(), "failed_count": failed.len(),
+                "remaining_count": remaining_count, "bytes_fetched": bytes_fetched,
+                "bytes_remaining": bytes_remaining}))?;
+        }
+        if !options.all {
+            break;
         }
     }
     let remaining = pending(&root)?;
+    let still: BTreeSet<&str> = remaining.iter().map(String::as_str).collect();
+    let done: BTreeSet<&str> = fetched.iter().map(String::as_str).collect();
+    // Un fallo se olvida cuando el documento se descargó o ya no sigue en la nube.
+    let settled = |path: &str| !still.contains(path) || done.contains(path);
+    if load(&common)?.failed.iter().any(|f| settled(&f.path)) {
+        update(&common, |record| {
+            record.failed.retain(|f| !settled(&f.path))
+        })?;
+    }
+    let omitted = if options.retry_failed {
+        0
+    } else {
+        remembered
+            .iter()
+            .filter(|path| still.contains(path.as_str()))
+            .count()
+    };
     let message = format!(
-        "Descargados: {} ({bytes_fetched} bytes). Fallaron: {}. Fuera del presupuesto: {}. Siguen en la nube: {}.",
+        "Descargados: {} ({bytes_fetched} bytes). Fallaron: {}. Fuera del presupuesto: {}. Omitidos por fallos anteriores: {omitted}. Siguen en la nube: {}.",
         fetched.len(),
         failed.len(),
         skipped_budget.len(),
@@ -139,6 +262,63 @@ pub fn fetch(start: &Path, timeout: Duration, max_bytes: Option<u64>) -> Result<
     Ok(
         json!({"fetched": fetched, "failed": failed, "skipped_budget": skipped_budget,
         "remaining": remaining, "bytes_fetched": bytes_fetched, "message": message}),
+    )
+}
+
+fn remember_failure(common: &Path, path: &str, reason: &str) -> Result<()> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let entry = Remembered {
+        path: path.to_owned(),
+        reason: reason.to_owned(),
+        at: rfc3339(now),
+    };
+    update(common, |record| {
+        record.failed.retain(|f| f.path != path);
+        record.failed.push(entry);
+        record.failed.sort_by(|a, b| a.path.cmp(&b.path));
+    })
+}
+
+/// Dos descargas del mismo historial no corren a la vez; la segunda no espera.
+fn fetch_lock(common: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(common.join(FETCH_LOCK))?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(file),
+        Err(e)
+            if e.kind() == ErrorKind::WouldBlock
+                || e.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
+            Err(Error::FetchBusy)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Segundos desde 1970 en RFC 3339, UTC. Los días se convierten con el algoritmo
+/// `civil_from_days` de Howard Hinnant, para no depender de un crate de fechas.
+fn rfc3339(secs: u64) -> String {
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
     )
 }
 
@@ -172,10 +352,19 @@ fn read_fully(path: PathBuf, timeout: Duration) -> std::result::Result<u64, Stri
 
 /// Rutas relativas a `root`, con `/`, de los documentos que siguen en la nube.
 pub fn pending(root: &Path) -> Result<Vec<String>> {
-    let mut paths = vec![];
-    walk(root, root, &mut paths)?;
-    paths.sort();
-    Ok(paths)
+    Ok(pending_sized(root)?
+        .into_iter()
+        .map(|(rel, _)| rel)
+        .collect())
+}
+
+/// Como `pending`, con el tamaño lógico de cada documento. Leer los metadatos de
+/// un documento sin datos no pide su descarga.
+pub fn pending_sized(root: &Path) -> Result<Vec<(String, u64)>> {
+    let mut out = vec![];
+    walk(root, root, &mut out)?;
+    out.sort();
+    Ok(out)
 }
 
 /// Los documentos pendientes de una carpeta y la configuración que los oculta a Git.
@@ -230,7 +419,7 @@ pub fn with_downloads(message: &str, downloaded: &[String]) -> String {
     }
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -248,7 +437,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
         }
         let rel = relative(root, &path)?;
         if only_in_cloud(&meta) || simulated(&rel) {
-            out.push(rel);
+            out.push((rel, meta.len()));
         }
     }
     Ok(())
@@ -319,7 +508,14 @@ fn simulated(_: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::pattern;
+    use super::{pattern, rfc3339};
+
+    #[test]
+    fn timestamps_are_rfc3339_in_utc() {
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(rfc3339(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
 
     #[cfg(unix)]
     #[test]

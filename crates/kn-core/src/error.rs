@@ -10,6 +10,8 @@ pub enum Error {
     NotWorkspace,
     #[error("La carpeta está ocupada por otra operación; vuelve a intentar.")]
     Busy,
+    #[error("Ya hay una descarga de la nube en curso para esta carpeta.")]
+    FetchBusy,
     #[error("Esta identidad pertenece a otra carpeta existente; usa kn init --fresh en la copia.")]
     Copied,
     #[error("Trabaja en una sesión: kn session start <nombre>.")]
@@ -38,6 +40,7 @@ impl Error {
             Self::Unsupported(_) => "UNSUPPORTED_CAPABILITY",
             Self::NotWorkspace => "NOT_A_WORKSPACE",
             Self::Busy => "WORKSPACE_BUSY",
+            Self::FetchBusy => "CLOUD_FETCH_BUSY",
             Self::Copied => "WORKSPACE_COPIED",
             Self::SessionRequired => "SESSION_REQUIRED",
             Self::IdentityChanged => "WORKSPACE_IDENTITY_CHANGED",
@@ -88,9 +91,10 @@ impl Envelope {
                 };
                 e.errors.push(
                     serde_json::json!({"code": err.code(), "message": err.to_string(),
-                    "retryable": matches!(err, Error::Busy),
+                    "retryable": matches!(err, Error::Busy | Error::FetchBusy),
                     "suggested_next_action": match err {
                         Error::Busy => "Vuelve a intentar cuando termine la otra operación.",
+                        Error::FetchBusy => "Espera a que termine la otra descarga; kn no la interrumpe.",
                         Error::Copied => "Ejecuta kn init --fresh en la copia.",
                         Error::SessionRequired => "Ejecuta kn session start <nombre>.",
                         Error::GitMissing(_) => "Instala Git o define KN_GIT con la ruta absoluta de un ejecutable git.",

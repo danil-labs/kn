@@ -21,7 +21,10 @@
 - Carpetas anidadas con historiales independientes: lo que integra la de abajo llega a la de arriba como `external_observation`. Inicializar dentro de una sesión sigue rechazado.
 - `kn migrate` registra una principal con `.kn/config.json` y quita su `.kn`; devuelve `registered`, `removed` y `workspace_id`. Las carpetas con marcador siguen funcionando y se registran en su siguiente escritura. Un marcador cuyo historial no está en esta máquina ya no bloquea `init`.
 - `cloud fetch --max-bytes 0` no lee ningún documento, tampoco los de tamaño aparente cero.
+- `kn cloud fetch --all` sigue por tandas hasta que no queda nada que intentar, con `--max-bytes` como tope total. `--progress` escribe en stderr una línea JSON por documento; stdout conserva el único envelope. Así una aplicación puede lanzar la descarga en segundo plano y mostrar el avance sin reimplementarla.
+- Las descargas que fallan se recuerdan en `cloud-pending.json` (schema 2, `failed: [{path, reason, at}]`) y las siguientes las omiten salvo con `--retry-failed`. `status` devuelve `cloud_failed` y `cloud_only_bytes`.
+- Dos `cloud fetch` del mismo historial no corren a la vez: la segunda termina con `CLOUD_FETCH_BUSY`.
 
 ### Límites de compatibilidad
 
-El registro usa schema 1 y los marcadores de sesión, schema 2. Mover o renombrar una principal registrada la deja sin identidad: `init` en la nueva ruta empieza otro historial. `init --fresh` inicia otro historial y no importa versiones Go. Las sesiones son obligatorias para commit/restore; las carpetas vacías no se versionan. Nube, identidad personal, recuperación transaccional, releases automáticos y validación de Terminus siguen pendientes. El PR Go #1 queda como referencia y el issue #2 conserva sus pendientes.
+El registro usa schema 1 y los marcadores de sesión, schema 2. `cloud-pending.json` pasa a schema 2: kn lee el 1, pero un kn anterior no lee el 2. Mover o renombrar una principal registrada la deja sin identidad: `init` en la nueva ruta empieza otro historial. `init --fresh` inicia otro historial y no importa versiones Go. Las sesiones son obligatorias para commit/restore; las carpetas vacías no se versionan. Nube, identidad personal, recuperación transaccional, releases automáticos y validación de Terminus siguen pendientes. El PR Go #1 queda como referencia y el issue #2 conserva sus pendientes.

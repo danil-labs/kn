@@ -119,7 +119,12 @@ pub fn check_safe(git: &Git) -> Result<()> {
 }
 pub fn status(ws: &Workspace) -> Result<Value> {
     let local = changes(&ws.git)?;
-    let cloud_only = crate::cloud::pending(&ws.git.root)?;
+    let sized = crate::cloud::pending_sized(&ws.git.root)?;
+    let cloud_only_bytes = sized
+        .iter()
+        .fold(0_u64, |total, (_, size)| total.saturating_add(*size));
+    let cloud_only: Vec<String> = sized.into_iter().map(|(rel, _)| rel).collect();
+    let cloud_failed = crate::cloud::failed(&ws.git, &cloud_only)?;
     let downloaded = crate::cloud::downloaded(&ws.git, &local)?;
     let mut unsafe_paths = vec![];
     let mut empty = vec![];
@@ -142,6 +147,7 @@ pub fn status(ws: &Workspace) -> Result<Value> {
     Ok(
         json!({"workspace_id": ws.config.workspace_id, "session": ws.config.session,
         "clean": local.is_empty(), "local_changes": local, "cloud_only": cloud_only,
+        "cloud_only_bytes": cloud_only_bytes, "cloud_failed": cloud_failed,
         "downloaded_since_last_observation": downloaded,
         "pending_sync": [], "conflicts": conflicts,
         "unsafe_paths": unsafe_paths, "unversioned_empty_folders": empty,
