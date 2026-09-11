@@ -21,6 +21,15 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 
 `-C <carpeta>` fija el directorio de ejecución; se admite una sola ocurrencia. No cambia el cwd del consumidor. `--help` funciona por comando. El nombre de sesión acepta 1–64 letras ASCII, números, guiones y guiones bajos; no recibe una ruta arbitraria.
 
+## Entorno
+
+| Variable | Efecto |
+| --- | --- |
+| `KN_HOME` | Carpeta del historial y las sesiones; `~/.kn` por defecto |
+| `KN_GIT` | Ruta absoluta del ejecutable git. Si está definida, gana sobre PATH; si es inválida, el comando falla con GIT_MISSING y no busca en PATH |
+
+Sin `KN_GIT`, kn usa el primer `git` de PATH (`git.exe` en Windows) e ignora las entradas relativas. La elección se hace una vez por proceso. `init` la comprueba antes de crear `.kn/` o KN_HOME. En Windows, los procesos que kn lanza no abren ventana de consola.
+
 ## Consultas Git para consumidores
 
 `rev-parse` requiere exactamente una consulta:
@@ -79,6 +88,7 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 | CONFLICT | Integración divergente, conflictos o archivos no versionados que obstruyen |
 | UNSAFE_PATH | Registro, symlink o ruta que viola las restricciones |
 | GIT_FAILED | Falló el proceso Git |
+| GIT_MISSING | No hay Git: KN_GIT es relativa, no existe o no es un archivo, o no está definida y PATH no tiene git. El mensaje nombra el remedio del sistema |
 | IO_ERROR | Falló filesystem/proceso |
 | INVALID_STATE | Estado JSON no se puede deserializar |
 

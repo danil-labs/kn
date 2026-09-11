@@ -61,6 +61,61 @@ fn session_path(value: &Value) -> PathBuf {
     PathBuf::from(value["data"]["path"].as_str().unwrap())
 }
 #[test]
+fn git_resolution_follows_kn_git_and_reports_missing_git() {
+    let f = Fixture::new();
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    let no_git = f._tmp.path().join("sin-git");
+    fs::create_dir(&no_git).unwrap();
+    let real_git = kn_core::git::executable().unwrap();
+    let init = |kn_git: Option<&Path>, path: &std::ffi::OsStr| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kn"));
+        cmd.current_dir(&f.main)
+            .env("KN_HOME", &f.home)
+            .env("PATH", path)
+            .env_remove("KN_GIT")
+            .args(["init", "--json"]);
+        if let Some(git) = kn_git {
+            cmd.env("KN_GIT", git);
+        }
+        let out = cmd.output().unwrap();
+        let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+        (out.status.code(), body)
+    };
+
+    let (code, missing) = init(None, no_git.as_os_str());
+    assert_eq!(code, Some(1), "{missing}");
+    assert_eq!(missing["errors"][0]["code"], "GIT_MISSING");
+    assert!(
+        missing["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("KN_GIT")
+    );
+    assert!(
+        !f.main.join(".kn").exists(),
+        "sin Git no se toca la carpeta"
+    );
+    assert!(!f.home.exists(), "sin Git no se crea KN_HOME");
+
+    let wrong = f._tmp.path().join("no-existe").join("git");
+    let full_path = std::env::var_os("PATH").unwrap();
+    let (code, invalid) = init(Some(&wrong), &full_path);
+    assert_eq!(code, Some(1), "{invalid}");
+    assert_eq!(invalid["errors"][0]["code"], "GIT_MISSING");
+    assert!(
+        invalid["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(&wrong.display().to_string())
+    );
+    assert!(!f.main.join(".kn").exists());
+
+    let (code, done) = init(Some(real_git), no_git.as_os_str());
+    assert_eq!(code, Some(0), "{done}");
+    assert_eq!(done["status"], "ok");
+    assert!(f.main.join(".kn/config.json").is_file());
+}
+#[test]
 fn cloud_only_documents_wait_without_blocking_or_being_deleted() {
     let f = Fixture::new();
     let remoto = "anexos/[v2] informe final.pdf";

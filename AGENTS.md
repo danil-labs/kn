@@ -11,12 +11,12 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-Requiere Git en PATH y Rust compatible con Cargo.toml. Cargo puede usar un target-dir externo: no supongas que el binario está en ./target. Las pruebas usan carpetas temporales y KN_HOME aislado; nunca pruebes restauraciones con documentos reales.
+Requiere Git (el de KN_GIT o, si no está definida, el de PATH) y Rust compatible con Cargo.toml. Cargo puede usar un target-dir externo: no supongas que el binario está en ./target. Las pruebas usan carpetas temporales y KN_HOME aislado; nunca pruebes restauraciones con documentos reales.
 
 ## Mapa
 
 - `crates/kn/src/main.rs`: clap, alias, salida humana/JSON/porcelain y códigos de salida.
-- `crates/kn-core/src/git.rs`: único runner Git; conserva el aislamiento del entorno.
+- `crates/kn-core/src/git.rs`: único runner Git; resuelve el ejecutable y conserva el aislamiento del entorno. Todo proceso se crea con `git::process`, que en Windows no abre consola.
 - `crates/kn-core/src/workspace.rs`: identidad, descubrimiento, rutas, locks y persistencia.
 - `crates/kn-core/src/ops.rs`: cambios, commits, historial, observación y restauración.
 - `crates/kn-core/src/sessions.rs`: worktrees e integración a la principal.

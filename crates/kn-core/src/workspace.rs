@@ -248,6 +248,8 @@ pub fn validate_name(name: &str) -> Result<()> {
 }
 pub fn initialize(root: &Path, fresh: bool) -> Result<Workspace> {
     let root = fs::canonicalize(root)?;
+    // Sin Git, init dejaría `.kn/` en la carpeta de documentos antes de fallar.
+    crate::git::executable()?;
     if root
         .join(".kn")
         .symlink_metadata()

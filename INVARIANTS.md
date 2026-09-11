@@ -1,6 +1,6 @@
 # Invariantes verificables
 
-Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs). No implican protección contra procesos externos, errores de disco o modificaciones hostiles de KN_HOME.
+Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs), salvo la última, que comprueba [git.rs](crates/kn-core/src/git.rs). No implican protección contra procesos externos, errores de disco o modificaciones hostiles de KN_HOME.
 
 | Propiedad | Regresión |
 | --- | --- |
@@ -22,5 +22,7 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs). 
 | Un documento que sigue en la nube no bloquea el inicio, no entra en la sesión hasta descargarse y no se pisa al integrar | `cloud_only_documents_wait_without_blocking_or_being_deleted` |
 | Un init que falla no deja historiales huérfanos en KN_HOME | `a_failed_init_leaves_no_orphan_history` |
 | Integrar registra antes lo pendiente de la sesión | `finish_records_pending_edits_before_integrating` |
+| KN_GIT gana sobre PATH; si es inválida, falla con GIT_MISSING sin caer a PATH; sin Git, init no crea `.kn/` ni KN_HOME | `git_resolution_follows_kn_git_and_reports_missing_git` |
+| Todo proceso se crea con `git::process`, que en Windows usa `CREATE_NO_WINDOW` | `every_process_is_built_through_process` |
 
 Toda corrección de pérdida de datos requiere una regresión con documentos temporales y un control explícito de qué archivos deben sobrevivir. Las limitaciones que no tienen una prueba aparecen en [SECURITY.md](SECURITY.md) y [ARCHITECTURE.md](ARCHITECTURE.md), no se presentan como garantías.

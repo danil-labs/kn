@@ -4,7 +4,8 @@ kn es experimental. Guarda y restaura documentos mediante Git, pero no es un san
 
 ## Alcance
 
-- KN_HOME y Git en PATH forman parte del entorno confiable. No compartas un motor escribible con usuarios o procesos no confiables.
+- KN_HOME y el git que kn ejecuta forman parte del entorno confiable: el de `KN_GIT` o, sin ella, el primero de PATH. Quien controla esa variable o PATH decide qué programa corre con los documentos. No compartas un motor escribible con usuarios o procesos no confiables.
+- kn ignora las entradas relativas de PATH, para que un `git` dentro de la carpeta de documentos no se ejecute. No descarga ni instala Git.
 - Los locks solo coordinan operaciones kn en esta máquina. No bloquean editores, clientes cloud ni Git ejecutado directamente.
 - Un checkpoint puede capturar archivos en momentos distintos si otra aplicación escribe durante la operación. No hay garantía transaccional de carpeta ni recuperación automática después de un fallo de disco o cierre abrupto.
 - Los archivos ignorados y carpetas vacías no tienen respaldo en el historial. Un archivo que pasa a estar versionado deja de ser ignorado según la semántica Git.

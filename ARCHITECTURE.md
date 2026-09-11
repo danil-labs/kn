@@ -9,7 +9,7 @@ flowchart LR
   App[Terminus u otro consumidor] --> CLI[kn: clap y salidas estables]
   CLI --> Core[kn-core]
   Core --> Runner[Runner Git aislado]
-  Runner --> Git[Git del sistema]
+  Runner --> Git[Git de KN_GIT o PATH]
   Git --> History[Historial en KN_HOME]
   Git --> Sessions[Worktrees externos]
   Git --> Documents[Carpeta documental principal]
@@ -25,7 +25,9 @@ flowchart LR
 | Consultas | `rev-parse` y porcelain | [plumbing.rs](crates/kn-core/src/plumbing.rs) |
 | Protocolo | Envelope y errores tipados | [error.rs](crates/kn-core/src/error.rs) |
 
-Git en PATH es una dependencia de ejecución. El runner desactiva configuración global y de sistema, hooks, firmas y normalización/filtros de contenido. No hay servidor, watcher, base de datos, dependencia de Terminus ni proveedor cloud implementado.
+Git es una dependencia de ejecución. El runner lo resuelve una vez por proceso: `KN_GIT` si está definida, y si no, el primer `git` de PATH (`git.exe` en Windows), ignorando entradas relativas. Una `KN_GIT` inválida falla con `GIT_MISSING` en vez de caer a PATH; sin ninguno, el mismo código lleva el remedio del sistema. kn no descarga ni instala Git. El runner desactiva configuración global y de sistema, hooks, firmas y normalización/filtros de contenido. Todo proceso que kn lanza se crea con `git::process`, que en Windows usa `CREATE_NO_WINDOW`: Terminus lanza kn sin consola y, sin la bandera, cada llamada a Git abriría una ventana. No hay servidor, watcher, base de datos, dependencia de Terminus ni proveedor cloud implementado.
+
+Límite sin verificar: en macOS, `/usr/bin/git` es un lanzador de las Command Line Tools. Si no están instaladas, kn lo encuentra en PATH y la llamada falla después como `GIT_FAILED`, no como `GIT_MISSING`.
 
 ## Almacenamiento
 
