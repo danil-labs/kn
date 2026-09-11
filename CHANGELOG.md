@@ -15,6 +15,8 @@
 - `KN_GIT` elige el ejecutable git y gana sobre PATH; una ruta inválida falla en vez de caer a PATH. Sin Git, el error `GIT_MISSING` nombra el remedio de cada sistema, e `init` falla antes de crear `.kn/` o KN_HOME.
 - En Windows, los procesos que kn lanza usan `CREATE_NO_WINDOW`: lanzado sin consola, como lo hace Terminus, ya no abre una ventana por cada llamada a Git.
 - Licencia doble: MIT o Apache-2.0, a elección de quien lo use (`LICENSE-MIT`, `LICENSE-APACHE`).
+- La principal recuerda qué seguía en la nube en su última versión (`$KN_HOME/repos/<id>/cloud-pending.json`). `status` y `worktree add` informan `downloaded_since_last_observation`, y la observación registra lo descargado en su propia versión `cloud_download`, antes de los cambios manuales (`external_observation`).
+- `kn cloud fetch [--timeout-secs N] [--max-bytes N]` descarga los documentos pendientes leyéndolos, del menor al mayor, con un límite de espera por documento. Devuelve `fetched`, `failed`, `skipped_budget`, `remaining` y `bytes_fetched`; no crea versiones.
 
 ### Límites de compatibilidad
 

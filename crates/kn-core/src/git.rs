@@ -175,6 +175,10 @@ impl Git {
     pub fn head(&self) -> Result<String> {
         self.text(&["rev-parse", "--verify", "HEAD"])
     }
+    /// La principal usa el directorio común; cada sesión, su registro en `worktrees/`.
+    pub fn is_primary(&self) -> bool {
+        self.dir == self.common
+    }
 }
 impl Engine for Git {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {

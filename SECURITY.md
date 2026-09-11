@@ -10,6 +10,8 @@ kn es experimental. Guarda y restaura documentos mediante Git, pero no es un san
 - Un checkpoint puede capturar archivos en momentos distintos si otra aplicación escribe durante la operación. No hay garantía transaccional de carpeta ni recuperación automática después de un fallo de disco o cierre abrupto.
 - Los archivos ignorados y carpetas vacías no tienen respaldo en el historial. Un archivo que pasa a estar versionado deja de ser ignorado según la semántica Git.
 - Los objetos Git y gitfiles no se suben a carpetas sincronizadas. No hay detección universal de directorios cloud ni prueba de que un proveedor esté sincronizado. kn solo reconoce, por metadatos de macOS y Windows, documentos que el proveedor todavía no descargó; esos quedan fuera del historial hasta descargarse.
+- `kn cloud fetch` lee los documentos pendientes para que el cliente de sincronización los baje del proveedor de la persona, con la sesión que ese cliente ya tiene. kn no usa credenciales, no habla con el proveedor y no envía nada fuera de la máquina. Una lectura agotada puede seguir descargando después de que kn termine.
+- `cloud_download` significa que el documento seguía en la nube en la última versión y ahora está en disco; no prueba que su contenido venga del proveedor ni quién lo escribió.
 - Los commits locales atribuyen la observación a kn; no prueban identidad de personas o dispositivos.
 - Los archivos y metadatos malformados deben producir un error, no disparar comandos desde su contenido. No hay garantía contra cambios de symlink entre la comprobación y el uso.
 

@@ -17,6 +17,8 @@ kn worktree finish
 
 `finish` registra lo pendiente, lo integra a la principal y conserva la sesión. Si otra sesión ya avanzó la principal, ejecuta `kn worktree update`, revisa el resultado y vuelve a integrar. Los conflictos permanecen en la sesión; su resolución avanzada usa Git. Al abrir o actualizar una sesión y antes de integrar, `kn` registra los cambios manuales observados en la principal como una versión de referencia (`external_observation`), sin reescribir sus documentos ni atribuir esos cambios al agente. Si la principal avanzó durante el trabajo, se pide actualizar la sesión antes de integrar. `status` solo informa: no crea versiones. No se necesita usar `kn` para colaborar manualmente.
 
+Los documentos que el proveedor muestra pero no descargó quedan fuera del historial (`cloud_only`). `kn cloud fetch` los descarga leyéndolos, sin crear versiones. Cuando se descargan, `status` los lista en `downloaded_since_last_observation`, y la siguiente observación los registra en su propia versión `cloud_download`, separada de los cambios manuales.
+
 `kn log --limit 20 --offset 0` lista versiones. `kn restore v_<12-hex>` restaura dentro de una sesión, registra antes los cambios pendientes y crea una versión solo si hay cambios. No modifica la principal ni envía nada a la nube. `kn worktree list` muestra las sesiones conservadas.
 
 Los comandos de aplicación aceptan `--json`, incluidos errores de argumentos y ayuda. Las consultas `rev-parse` y los modos `--porcelain` usan salida de texto/bytes y rechazan combinarlos con `--json`. Salidas: 0 éxito, 1 error operativo, 2 conflicto, 3 entrada inválida o capacidad no disponible. `connect`, `push`, `pull`, `status --refresh` y `diff --base/--remote` devuelven capacidad no disponible.

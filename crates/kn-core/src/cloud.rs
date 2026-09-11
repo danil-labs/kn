@@ -2,12 +2,171 @@
 //! pero no lo bajó a disco. Leerlo obliga a descargarlo y, sin el cliente de
 //! sincronización, la lectura se agota. Se reconocen por metadatos, sin abrirlos,
 //! y se ocultan a Git en cada llamada hasta que el proveedor los descargue.
+//!
+//! La principal recuerda, junto a su historial en KN_HOME, qué seguía en la nube
+//! en su última versión: así distingue lo descargado de lo editado por alguien.
 
 use crate::{
     error::{Error, Result},
-    git::git_path,
+    git::{Git, git_path},
+    ops::Change,
+    workspace::{Workspace, atomic_json},
 };
-use std::{fs, io::Write, path::Path};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
+};
+
+const RECORD: &str = "cloud-pending.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Record {
+    schema_version: u32,
+    cloud_only: Vec<String>,
+}
+
+/// Guarda lo que seguía en la nube al registrar una versión de la principal.
+/// Las sesiones no tienen documentos en la nube y no escriben el registro.
+pub fn remember(git: &Git, paths: &[String]) -> Result<()> {
+    if !git.is_primary() {
+        return Ok(());
+    }
+    atomic_json(
+        &git.common.join(RECORD),
+        &Record {
+            schema_version: 1,
+            cloud_only: paths.to_vec(),
+        },
+    )
+}
+
+fn recorded(git: &Git) -> Result<BTreeSet<String>> {
+    let bytes = match fs::read(git.common.join(RECORD)) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let record: Record = serde_json::from_slice(&bytes)?;
+    if record.schema_version != 1 {
+        return Err(Error::Invalid(format!(
+            "El registro de documentos en la nube usa un formato desconocido: {RECORD}."
+        )));
+    }
+    Ok(record.cloud_only.into_iter().collect())
+}
+
+/// Lo que seguía en la nube en la última versión de la principal y Git ya ve como
+/// nuevo: la próxima observación lo versiona como `cloud_download`. Solo lee.
+pub fn downloaded(git: &Git, changes: &[Change]) -> Result<Vec<String>> {
+    if !git.is_primary() {
+        return Ok(vec![]);
+    }
+    let pending = recorded(git)?;
+    Ok(changes
+        .iter()
+        .filter(|c| c.kind == "added" && pending.contains(&c.path))
+        .map(|c| c.path.clone())
+        .collect())
+}
+
+#[derive(Serialize)]
+struct Failure {
+    path: String,
+    reason: String,
+}
+
+/// Descarga los documentos pendientes de la principal leyéndolos enteros, del más
+/// pequeño al más grande. No crea versiones: la siguiente observación las crea.
+pub fn fetch(start: &Path, timeout: Duration, max_bytes: Option<u64>) -> Result<Value> {
+    // Las lecturas pueden tardar minutos; el lock se suelta antes de empezar.
+    let root = {
+        let ws = Workspace::open(start)?;
+        if ws.config.session.is_some() {
+            ws.primary()?.root
+        } else {
+            ws.git.root.clone()
+        }
+    };
+    let mut failed = vec![];
+    let mut queue = vec![];
+    for rel in pending(&root)? {
+        match fs::symlink_metadata(native(&root, &rel)) {
+            Ok(meta) => queue.push((meta.len(), rel)),
+            Err(e) => failed.push(Failure {
+                path: rel,
+                reason: e.to_string(),
+            }),
+        }
+    }
+    queue.sort();
+    let mut fetched = vec![];
+    let mut skipped_budget = vec![];
+    let mut bytes_fetched: u64 = 0;
+    let mut spent: u64 = 0;
+    for (size, rel) in queue {
+        if !skipped_budget.is_empty()
+            || max_bytes.is_some_and(|max| spent.saturating_add(size) > max)
+        {
+            skipped_budget.push(rel);
+            continue;
+        }
+        spent = spent.saturating_add(size);
+        match read_fully(native(&root, &rel), timeout) {
+            Ok(bytes) => {
+                bytes_fetched = bytes_fetched.saturating_add(bytes);
+                fetched.push(rel);
+            }
+            Err(reason) => failed.push(Failure { path: rel, reason }),
+        }
+    }
+    let remaining = pending(&root)?;
+    let message = format!(
+        "Descargados: {} ({bytes_fetched} bytes). Fallaron: {}. Fuera del presupuesto: {}. Siguen en la nube: {}.",
+        fetched.len(),
+        failed.len(),
+        skipped_budget.len(),
+        remaining.len()
+    );
+    Ok(
+        json!({"fetched": fetched, "failed": failed, "skipped_budget": skipped_budget,
+        "remaining": remaining, "bytes_fetched": bytes_fetched, "message": message}),
+    )
+}
+
+fn native(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(root.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Una lectura agotada no se puede cancelar: su hilo queda suelto y termina con
+/// el proceso, para que kn pueda salir aunque el proveedor no conteste.
+fn read_fully(path: PathBuf, timeout: Duration) -> std::result::Result<u64, String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("kn-cloud-fetch".into())
+        .spawn(move || {
+            let read = fs::File::open(&path)
+                .and_then(|mut file| std::io::copy(&mut file, &mut std::io::sink()));
+            // Tras un timeout nadie espera el resultado; perderlo es lo previsto.
+            tx.send(read).ok();
+        })
+        .map_err(|e| e.to_string())?;
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err("timeout".into()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("La lectura terminó sin resultado.".into())
+        }
+    }
+}
 
 /// Rutas relativas a `root`, con `/`, de los documentos que siguen en la nube.
 pub fn pending(root: &Path) -> Result<Vec<String>> {
@@ -55,6 +214,16 @@ pub fn with_notice(message: &str, pending: &[String]) -> String {
         0 => message.to_owned(),
         n => format!(
             "{message} {n} documento(s) siguen en la nube; kn los versiona cuando se descarguen."
+        ),
+    }
+}
+
+/// El mensaje humano cuenta lo descargado desde la última versión de la principal.
+pub fn with_downloads(message: &str, downloaded: &[String]) -> String {
+    match downloaded.len() {
+        0 => message.to_owned(),
+        n => format!(
+            "{message} {n} documento(s) se descargaron de la nube desde la última observación; se versionan aparte."
         ),
     }
 }
@@ -148,7 +317,38 @@ fn simulated(_: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::pattern;
+    use super::{pattern, read_fully};
+    use std::{
+        fs,
+        time::{Duration, Instant},
+    };
+
+    #[cfg(unix)]
+    #[test]
+    fn a_blocked_read_times_out_and_leaves_the_caller_free() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fifo = tmp.path().join("sin escritor");
+        assert!(
+            crate::git::process("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let start = Instant::now();
+        assert_eq!(
+            read_fully(fifo.clone(), Duration::from_millis(200)),
+            Err("timeout".into())
+        );
+        assert!(start.elapsed() < Duration::from_secs(5));
+        // Abrir el otro extremo desbloquea al lector suelto.
+        drop(fs::OpenOptions::new().write(true).open(&fifo).unwrap());
+        let doc = tmp.path().join("listo.txt");
+        fs::write(&doc, "abc").unwrap();
+        assert_eq!(read_fully(doc, Duration::from_secs(5)), Ok(3));
+        assert!(read_fully(tmp.path().join("no existe"), Duration::from_secs(5)).is_err());
+    }
+
     #[test]
     fn patterns_name_exactly_one_path() {
         assert_eq!(

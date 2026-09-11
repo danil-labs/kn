@@ -16,6 +16,7 @@ Fuente de implementación: [main.rs](../crates/kn/src/main.rs), [plumbing.rs](..
 | `worktree list` | Lista sesiones conservadas; con porcelain incluye principal y registros Git |
 | `worktree update` | Integra la principal en la sesión actual |
 | `worktree finish` | Registra lo pendiente (`recorded_document_count`) e integra la sesión a la principal si puede avanzar fast-forward |
+| `cloud fetch [--timeout-secs N] [--max-bytes N]` | Descarga los documentos de la principal que siguen en la nube leyéndolos; no crea versiones |
 | `connect [proveedor]`, `pull`, `push` | Capacidad no disponible; no solicitan ni usan tokens |
 | `version`, `--version` | Versión del build |
 
@@ -99,6 +100,39 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 Leer uno de esos documentos obligaría a descargarlo, y sin el cliente de sincronización la lectura se agota. Por eso Git no los lista ni los guarda: no aparecen en `local_changes`, `clean` no los cuenta y no entran en la versión ni en las sesiones. Cuando el proveedor los descarga, la siguiente observación los versiona. `worktree finish` nunca los pisa: si la sesión trae un documento en la misma ruta, devuelve CONFLICT.
 
 Límite sin prueba: un documento ya versionado que el proveedor reemplaza por otra versión sin descargarla todavía se lee al observarlo.
+
+### Lo descargado desde la última observación
+
+Cada vez que kn registra una versión en la principal (el commit inicial de `init` y cada observación de `worktree add`, `update` o `finish`), guarda la lista `cloud_only` de ese momento en `$KN_HOME/repos/<workspace_id>/cloud-pending.json`, con escritura atómica. Una observación sin cambios también la actualiza. Nunca se escribe en la carpeta de documentos ni desde una sesión.
+
+`status` en la principal devuelve `downloaded_since_last_observation`: las rutas de esa lista que ya no siguen en la nube, existen y Git ve como documentos nuevos, es decir, que todavía no están en HEAD ni ignorados. `status` solo lee el registro. En una sesión la lista siempre está vacía. `worktree add` devuelve la misma lista para la principal: son los documentos que esa observación acaba de versionar.
+
+Al observar, esos documentos se registran primero, solos, en una versión con mensaje «Documentos descargados de la nube» y `Kn-Reason: cloud_download`. El resto de los cambios externos va después en otra versión `external_observation`. Si solo hay un tipo, se crea una sola versión. `log` muestra `reason: "cloud_download"` como las demás razones: `init`, `external_observation`, `manual_snapshot`, `pre_restore_snapshot`, `restore`, `pre_finish_snapshot` y `session_update`.
+
+Límite: la clasificación depende del registro. Un documento que el proveedor descarga antes de que kn lo haya visto en la nube se versiona como `external_observation`.
+
+### `cloud fetch`
+
+`cloud fetch` descarga los documentos de la principal que siguen en la nube. Se puede ejecutar desde la principal o desde una sesión; siempre actúa sobre la principal. Lee cada documento entero, uno por uno, del menor al mayor tamaño aparente, en un hilo con su propio límite de espera.
+
+| Opción | Efecto |
+| --- | --- |
+| `--timeout-secs N` | Segundos de espera por documento; 60 por defecto, mínimo 1 |
+| `--max-bytes N` | Se detiene antes de superar N bytes, sumando el tamaño aparente de cada documento intentado; los restantes van a `skipped_budget` |
+
+`data` contiene:
+
+| Campo | Contenido |
+| --- | --- |
+| `fetched` | Rutas leídas completas |
+| `failed` | `[{path, reason}]`; `reason` es `timeout` o el texto del error de IO |
+| `skipped_budget` | Rutas que no se intentaron por `--max-bytes` |
+| `remaining` | Rutas que siguen en la nube al terminar |
+| `bytes_fetched` | Bytes leídos de los documentos de `fetched` |
+
+La salida humana es una línea de resumen. Un documento que falla es un resultado: el comando termina con 0. Una carpeta sin kn u otro error operativo usa el envelope de error habitual. `fetch` no crea versiones ni actualiza el registro: la siguiente observación versiona lo descargado como `cloud_download`. No mantiene el lock de kn mientras lee, así que otras operaciones de kn pueden correr en paralelo.
+
+Una lectura agotada no se puede cancelar. Su hilo queda suelto y termina con el proceso; el proveedor puede seguir descargando ese documento. Sin verificar: que el proceso salga de inmediato si el sistema mantiene la lectura bloqueada dentro del kernel.
 
 ## Estado de integración
 

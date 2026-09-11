@@ -343,6 +343,7 @@ fn record_initial(root: &Path, common: &Path, id: uuid::Uuid) -> Result<()> {
         "-m",
         "Kn-Reason: init",
     ])?;
+    crate::cloud::remember(&git, &hidden.paths)?;
     // Empty initial commit anchors worktrees; it is never exposed as a document version.
     atomic_json(&root.join(".kn/config.json"), &config)
 }

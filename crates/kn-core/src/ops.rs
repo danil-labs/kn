@@ -1,11 +1,11 @@
 use crate::{
     error::{Error, Result},
-    git::{Engine, Git, nul_paths, version},
+    git::{Engine, Git, git_path, nul_paths, version},
     workspace::Workspace,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::{fs, io::Write, path::Path};
 
 #[derive(Serialize)]
 pub struct Change {
@@ -120,6 +120,7 @@ pub fn check_safe(git: &Git) -> Result<()> {
 pub fn status(ws: &Workspace) -> Result<Value> {
     let local = changes(&ws.git)?;
     let cloud_only = crate::cloud::pending(&ws.git.root)?;
+    let downloaded = crate::cloud::downloaded(&ws.git, &local)?;
     let mut unsafe_paths = vec![];
     let mut empty = vec![];
     inspect(&ws.git.root, &ws.git.root, &mut unsafe_paths, &mut empty)?;
@@ -127,17 +128,21 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         &ws.git
             .run(&["diff", "--name-only", "--diff-filter=U", "-z"])?,
     )?;
-    let message = crate::cloud::with_notice(
-        if ws.config.session.is_some() {
-            "Sesión local; los cambios todavía no se publican."
-        } else {
-            "Carpeta compartida. Los cambios manuales se reconocen; abre una sesión para trabajar con agentes."
-        },
-        &cloud_only,
+    let message = crate::cloud::with_downloads(
+        &crate::cloud::with_notice(
+            if ws.config.session.is_some() {
+                "Sesión local; los cambios todavía no se publican."
+            } else {
+                "Carpeta compartida. Los cambios manuales se reconocen; abre una sesión para trabajar con agentes."
+            },
+            &cloud_only,
+        ),
+        &downloaded,
     );
     Ok(
         json!({"workspace_id": ws.config.workspace_id, "session": ws.config.session,
         "clean": local.is_empty(), "local_changes": local, "cloud_only": cloud_only,
+        "downloaded_since_last_observation": downloaded,
         "pending_sync": [], "conflicts": conflicts,
         "unsafe_paths": unsafe_paths, "unversioned_empty_folders": empty,
         "existing_user_git": ws.config.session.is_none() && ws.git.root.join(".git").exists(),
@@ -188,6 +193,7 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
         nul_paths(&git.run(&["diff", "--cached", "--name-only", "-z", "HEAD", "--"])?)?.len();
     let merging = git.dir.join("MERGE_HEAD").exists();
     if count == 0 && !merging {
+        crate::cloud::remember(git, &hidden.paths)?;
         return Ok((git.head()?, 0, false));
     }
     git.run(&[
@@ -201,7 +207,32 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
         "-m",
         &format!("Kn-Reason: {reason}"),
     ])?;
+    crate::cloud::remember(git, &hidden.paths)?;
     Ok((git.head()?, count, true))
+}
+
+/// Registra solo `paths`; los demás cambios quedan fuera de esta versión. No
+/// actualiza el registro de la nube: quien llama termina con `commit`.
+pub fn commit_paths(git: &Git, paths: &[String], message: &str, reason: &str) -> Result<()> {
+    let mut list = tempfile::NamedTempFile::new()?;
+    for path in paths {
+        list.write_all(path.as_bytes())?;
+        list.write_all(b"\0")?;
+    }
+    list.flush()?;
+    // El runner fija GIT_LITERAL_PATHSPECS: cada ruta nombra exactamente un documento.
+    let from = format!("--pathspec-from-file={}", git_path(list.path())?);
+    git.run(&["add", &from, "--pathspec-file-nul"])?;
+    git.run(&[
+        "commit",
+        "-m",
+        message,
+        "-m",
+        &format!("Kn-Reason: {reason}"),
+        &from,
+        "--pathspec-file-nul",
+    ])?;
+    Ok(())
 }
 pub fn history(ws: &Workspace, limit: usize, offset: usize) -> Result<Value> {
     if limit == 0 || limit > 1000 {

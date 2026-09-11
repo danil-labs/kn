@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -164,6 +164,187 @@ fn cloud_only_documents_wait_without_blocking_or_being_deleted() {
         "contenido remoto\n",
         "ya descargado, la siguiente observación lo versiona"
     );
+}
+const NUBE: &str = "KN_TEST_CLOUD_ONLY";
+fn cloud_record(f: &Fixture, init: &Value) -> PathBuf {
+    f.home
+        .join("repos")
+        .join(init["data"]["workspace_id"].as_str().unwrap())
+        .join("cloud-pending.json")
+}
+fn version_files(f: &Fixture, init: &Value, version: &Value) -> Vec<String> {
+    let out = Command::new(kn_core::git::executable().unwrap())
+        .current_dir(f._tmp.path())
+        .env(
+            "GIT_DIR",
+            f.home
+                .join("repos")
+                .join(init["data"]["workspace_id"].as_str().unwrap()),
+        )
+        .args([
+            "show",
+            "--name-only",
+            "-z",
+            "--format=",
+            &version.as_str().unwrap()[2..],
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    kn_core::git::nul_paths(&out.stdout).unwrap()
+}
+#[test]
+fn cloud_downloads_are_reported_without_writing() {
+    let f = Fixture::new();
+    let remoto = "anexos/[v2] informe final.pdf";
+    fs::write(f.main.join("acta.md"), "local\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(remoto), "contenido remoto\n").unwrap();
+    let init = f.run_env(&f.main, &["init"], 0, &[(NUBE, remoto)]);
+    let record = cloud_record(&f, &init);
+    let before = fs::read(&record).unwrap();
+    let pending: Value = serde_json::from_slice(&before).unwrap();
+    assert_eq!(pending["cloud_only"], json!([remoto]));
+    assert!(!record.starts_with(&f.main));
+
+    let waiting = f.run_env(&f.main, &["status"], 0, &[(NUBE, remoto)]);
+    assert_eq!(waiting["data"]["cloud_only"], json!([remoto]));
+    assert_eq!(
+        waiting["data"]["downloaded_since_last_observation"],
+        json!([])
+    );
+
+    let status = f.run(&f.main, &["status"], 0);
+    assert_eq!(
+        status["data"]["downloaded_since_last_observation"],
+        json!([remoto])
+    );
+    assert_eq!(status["data"]["cloud_only"], json!([]));
+    assert_eq!(
+        fs::read(&record).unwrap(),
+        before,
+        "status solo lee el registro"
+    );
+}
+#[test]
+fn cloud_downloads_have_their_own_version() {
+    let f = Fixture::new();
+    let (uno, dos) = ("uno.pdf", "anexos/dos.pdf");
+    fs::write(f.main.join("acta.md"), "original\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(uno), "uno\n").unwrap();
+    fs::write(f.main.join(dos), "dos\n").unwrap();
+    let init = f.run_env(&f.main, &["init"], 0, &[(NUBE, "uno.pdf\nanexos/dos.pdf")]);
+    let record = cloud_record(&f, &init);
+
+    // Solo se descargó uno: una sola versión, cloud_download.
+    let solo = f.run_env(&f.main, &["worktree", "add", "solo"], 0, &[(NUBE, dos)]);
+    assert_eq!(
+        solo["data"]["downloaded_since_last_observation"],
+        json!([uno])
+    );
+    let s = session_path(&solo);
+    let log = f.run(&s, &["log"], 0)["data"]["versions"].clone();
+    assert_eq!(log.as_array().unwrap().len(), 2, "{log}");
+    assert_eq!(log[0]["reason"], "cloud_download");
+    assert_eq!(log[0]["message"], "Documentos descargados de la nube");
+    assert_eq!(version_files(&f, &init, &log[0]["id"]), [uno]);
+    assert_eq!(log[1]["reason"], "init");
+
+    let recorded = fs::read(&record).unwrap();
+    fs::write(s.join("borrador.md"), "del agente\n").unwrap();
+    f.run(&s, &["commit"], 0);
+    assert_eq!(
+        fs::read(&record).unwrap(),
+        recorded,
+        "una sesión no escribe el registro"
+    );
+
+    // El otro se descargó y alguien editó el acta: dos versiones separadas.
+    fs::write(f.main.join("acta.md"), "editada\n").unwrap();
+    let mixta = f.run(&f.main, &["worktree", "add", "mixta"], 0);
+    assert_eq!(
+        mixta["data"]["downloaded_since_last_observation"],
+        json!([dos])
+    );
+    let log = f.run(&session_path(&mixta), &["log"], 0)["data"]["versions"].clone();
+    let reasons: Vec<_> = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["reason"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            "external_observation",
+            "cloud_download",
+            "cloud_download",
+            "init"
+        ]
+    );
+    assert_eq!(version_files(&f, &init, &log[0]["id"]), ["acta.md"]);
+    assert_eq!(version_files(&f, &init, &log[1]["id"]), [dos]);
+    let status = f.run(&f.main, &["status"], 0);
+    assert_eq!(status["data"]["clean"], true);
+    assert_eq!(
+        status["data"]["downloaded_since_last_observation"],
+        json!([])
+    );
+}
+#[test]
+fn cloud_fetch_reads_pending_documents_without_versions() {
+    let f = Fixture::new();
+    let remoto = "anexos/informe final.pdf";
+    let contenido = "contenido remoto\n";
+    fs::write(f.main.join("acta.md"), "local\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(remoto), contenido).unwrap();
+    let nube = [(NUBE, remoto)];
+    f.run_env(&f.main, &["init"], 0, &nube);
+    let head = f.raw(&f.main, &["rev-parse", "HEAD"], 0);
+
+    let budget =
+        f.run_env(&f.main, &["cloud", "fetch", "--max-bytes", "0"], 0, &nube)["data"].clone();
+    assert_eq!(budget["skipped_budget"], json!([remoto]));
+    assert_eq!(budget["fetched"], json!([]));
+    assert_eq!(budget["bytes_fetched"], 0);
+
+    let done = f.run_env(
+        &f.main,
+        &["cloud", "fetch", "--timeout-secs", "5"],
+        0,
+        &nube,
+    )["data"]
+        .clone();
+    assert_eq!(done["fetched"], json!([remoto]));
+    assert_eq!(done["failed"], json!([]));
+    assert_eq!(done["skipped_budget"], json!([]));
+    assert_eq!(done["bytes_fetched"], contenido.len());
+    assert_eq!(done["remaining"], json!([remoto]), "la simulación sigue");
+
+    let s = session_path(&f.run_env(&f.main, &["worktree", "add", "agente"], 0, &nube));
+    assert_eq!(
+        f.run_env(&s, &["cloud", "fetch"], 0, &nube)["data"]["fetched"],
+        json!([remoto]),
+        "desde una sesión descarga en la principal"
+    );
+    let human = Command::new(env!("CARGO_BIN_EXE_kn"))
+        .current_dir(&f.main)
+        .env("KN_HOME", &f.home)
+        .env(NUBE, remoto)
+        .args(["cloud", "fetch"])
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    assert_eq!(String::from_utf8(human.stdout).unwrap().lines().count(), 1);
+
+    f.run(&f.main, &["cloud", "fetch", "--timeout-secs", "0"], 3);
+    assert_eq!(
+        f.run(f._tmp.path(), &["cloud", "fetch"], 1)["errors"][0]["code"],
+        "NOT_A_WORKSPACE"
+    );
+    assert_eq!(f.raw(&f.main, &["rev-parse", "HEAD"], 0), head);
 }
 #[cfg(unix)]
 #[test]

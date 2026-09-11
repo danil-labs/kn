@@ -30,7 +30,7 @@ pub fn start(ws: &Workspace, name: &str) -> Result<Value> {
         dir.parent()
             .ok_or_else(|| Error::Invalid("Ruta de sesión inválida.".into()))?,
     )?;
-    observe_external(&main)?;
+    let downloaded = observe_external(&main)?;
     main.run(&[
         "worktree",
         "add",
@@ -48,9 +48,19 @@ pub fn start(ws: &Workspace, name: &str) -> Result<Value> {
         },
     )?;
     let cloud_only = crate::cloud::pending(&main.root)?;
+    let mut message = crate::cloud::with_notice(
+        "Sesión creada. Abre esa carpeta para trabajar.",
+        &cloud_only,
+    );
+    if !downloaded.is_empty() {
+        message = format!(
+            "{message} {} documento(s) descargados de la nube quedaron en su propia versión.",
+            downloaded.len()
+        );
+    }
     Ok(
         json!({"session": name, "path": dir, "cloud_only": cloud_only,
-        "message": crate::cloud::with_notice("Sesión creada. Abre esa carpeta para trabajar.", &cloud_only)}),
+        "downloaded_since_last_observation": downloaded, "message": message}),
     )
 }
 pub fn list(ws: &Workspace) -> Result<Value> {
@@ -142,10 +152,26 @@ fn require_clean(git: &Git) -> Result<()> {
 
 /// Observe shared-folder changes as a new baseline without rewriting its documents.
 /// The commit identifies kn as the observer, never as the author of external edits.
-fn observe_external(main: &Git) -> Result<()> {
+/// Lo descargado de la nube va antes, en su propia versión; devuelve esas rutas.
+fn observe_external(main: &Git) -> Result<Vec<String>> {
     ops::check_safe(main)?;
-    if !ops::changes(main)?.is_empty() {
+    let changes = ops::changes(main)?;
+    let downloaded = crate::cloud::downloaded(main, &changes)?;
+    if changes.is_empty() {
+        // Sin registrar aquí, un documento que aparece en la nube sin otros cambios
+        // se versionaría al descargarse como external_observation.
+        crate::cloud::remember(main, &crate::cloud::pending(&main.root)?)?;
+    } else {
+        if !downloaded.is_empty() {
+            ops::commit_paths(
+                main,
+                &downloaded,
+                "Documentos descargados de la nube",
+                "cloud_download",
+            )?;
+        }
         ops::commit(main, "Cambios externos observados", "external_observation")?;
     }
-    require_clean(main)
+    require_clean(main)?;
+    Ok(downloaded)
 }
