@@ -80,4 +80,13 @@ Las consultas son de solo lectura y requieren una carpeta kn válida. No inicial
 
 `status --porcelain` usa el formato v1 de Git directamente. `worktree list --porcelain` conserva los registros de Git, ajustando únicamente la ruta de la principal: Git reporta el directorio de metadatos externo, mientras kn conoce la carpeta documental. `-z` conserva nombres con espacios, acentos y saltos de línea sin ambigüedad; úsalo en integraciones. Las rutas Git expuestas son locales y nunca deben subirse a Drive. Referencias de formato: [status](https://git-scm.com/docs/git-status), [worktree](https://git-scm.com/docs/git-worktree), [rev-parse](https://git-scm.com/docs/git-rev-parse).
 
-`commit`, `log` y `worktree add` son los nombres preferidos. `snapshot`, `history` y `session start` siguen como alias. No se promete compatibilidad completa con todos los argumentos o semánticas de Git: `commit` guarda todos los cambios de documentos permitidos en la sesión; `worktree add <nombre>` elige una ruta segura bajo KN_HOME, no recibe una ruta arbitraria. `worktree update` y `worktree finish` conservan el flujo específico de integrar sesiones de kn. `inspect` se conserva oculto como consulta JSON experimental, no es el contrato recomendado de integración.
+`commit`, `log` y `worktree add` son los nombres preferidos. `snapshot`, `history` y `session start` siguen como alias. No se promete compatibilidad completa con todos los argumentos o semánticas de Git: `commit` registra una versión con todos los cambios de documentos permitidos en la sesión; `worktree add <nombre>` elige una ruta segura bajo KN_HOME, no recibe una ruta arbitraria. `worktree update` y `worktree finish` conservan el flujo específico de integrar sesiones de kn. `inspect` se conserva oculto como consulta JSON experimental, no es el contrato recomendado de integración.
+
+## Licencia
+
+kn se distribuye bajo cualquiera de estas dos licencias, a elección de quien lo use:
+
+- [Apache License 2.0](LICENSE-APACHE)
+- [MIT](LICENSE-MIT)
+
+Salvo que se indique lo contrario, toda contribución enviada para incluirse en kn se licencia de la misma forma, sin términos adicionales.
