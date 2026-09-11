@@ -47,8 +47,10 @@ pub fn start(ws: &Workspace, name: &str) -> Result<Value> {
             session: Some(name.into()),
         },
     )?;
+    let cloud_only = crate::cloud::pending(&main.root)?;
     Ok(
-        json!({"session": name, "path": dir, "message": "Sesión creada. Abre esa carpeta para trabajar."}),
+        json!({"session": name, "path": dir, "cloud_only": cloud_only,
+        "message": crate::cloud::with_notice("Sesión creada. Abre esa carpeta para trabajar.", &cloud_only)}),
     )
 }
 pub fn list(ws: &Workspace) -> Result<Value> {

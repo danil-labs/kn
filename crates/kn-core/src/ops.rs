@@ -15,13 +15,17 @@ pub struct Change {
 }
 
 pub fn changes(git: &Git) -> Result<Vec<Change>> {
-    let out = git.run(&[
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-        "--no-renames",
-    ])?;
+    let hidden = crate::cloud::Hidden::of(&git.root)?;
+    let out = git.run_with(
+        &hidden.git_config()?,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+    )?;
     nul_paths(&out)?
         .into_iter()
         .map(|record| {
@@ -114,6 +118,7 @@ pub fn check_safe(git: &Git) -> Result<()> {
 }
 pub fn status(ws: &Workspace) -> Result<Value> {
     let local = changes(&ws.git)?;
+    let cloud_only = crate::cloud::pending(&ws.git.root)?;
     let mut unsafe_paths = vec![];
     let mut empty = vec![];
     inspect(&ws.git.root, &ws.git.root, &mut unsafe_paths, &mut empty)?;
@@ -121,17 +126,25 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         &ws.git
             .run(&["diff", "--name-only", "--diff-filter=U", "-z"])?,
     )?;
+    let message = crate::cloud::with_notice(
+        if ws.config.session.is_some() {
+            "Sesión local; los cambios todavía no se publican."
+        } else {
+            "Carpeta compartida. Los cambios manuales se reconocen; abre una sesión para trabajar con agentes."
+        },
+        &cloud_only,
+    );
     Ok(
         json!({"workspace_id": ws.config.workspace_id, "session": ws.config.session,
-        "clean": local.is_empty(), "local_changes": local, "pending_sync": [], "conflicts": conflicts,
+        "clean": local.is_empty(), "local_changes": local, "cloud_only": cloud_only,
+        "pending_sync": [], "conflicts": conflicts,
         "unsafe_paths": unsafe_paths, "unversioned_empty_folders": empty,
         "existing_user_git": ws.config.session.is_none() && ws.git.root.join(".git").exists(),
         "capabilities": {"local_versioning": true, "sessions": true, "cloud_connect": false,
             "pull": false, "push": false, "remote_refresh": false},
         "last_remote_observed": null, "remote_freshness": "unknown", "sync_baseline_id": null,
         "latest_version_id": version(&ws.git.head()?),
-        "message": if ws.config.session.is_some() { "Sesión local; los cambios todavía no se publican." }
-            else { "Carpeta compartida. Los cambios manuales se reconocen; abre una sesión para trabajar con agentes." }}),
+        "message": message}),
     )
 }
 pub fn diff(ws: &Workspace, patch: bool) -> Result<Value> {
@@ -167,7 +180,8 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
             "Resuelve los documentos y marca la resolución con Git antes de guardar.".into(),
         ));
     }
-    git.run(&["add", "-A", "--", "."])?;
+    let hidden = crate::cloud::Hidden::of(&git.root)?;
+    git.run_with(&hidden.git_config()?, &["add", "-A", "--", "."])?;
     let count =
         nul_paths(&git.run(&["diff", "--cached", "--name-only", "-z", "HEAD", "--"])?)?.len();
     let merging = git.dir.join("MERGE_HEAD").exists();

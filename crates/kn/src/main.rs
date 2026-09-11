@@ -169,10 +169,12 @@ fn execute(cli: &Cli) -> Result<Value> {
     if let Commands::Init { fresh } = cli.command {
         let already = cwd.join(".kn/config.json").exists() && !fresh;
         let ws = workspace::initialize(&cwd, fresh)?;
+        let cloud_only = kn_core::cloud::pending(&ws.git.root)?;
         return Ok(
             json!({"workspace_id": ws.config.workspace_id, "root": ws.git.root,
             "already_exists": already, "initial_version_id": version(&ws.git.head()?),
-            "message": "Carpeta lista. Usa kn session start <nombre> para trabajar."}),
+            "cloud_only": cloud_only,
+            "message": kn_core::cloud::with_notice("Carpeta lista. Usa kn session start <nombre> para trabajar.", &cloud_only)}),
         );
     }
     let ws = Workspace::open(&cwd)?;

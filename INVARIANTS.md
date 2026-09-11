@@ -19,5 +19,7 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs). 
 | Las sesiones divergentes no sobrescriben la principal | `concurrent_sessions_require_update_and_preserve_main_on_conflict` |
 | Las capacidades cloud no implementadas devuelven unsupported | `cloud_capabilities_remain_honest` |
 | Los nombres nuevos conservan alias y las consultas separan JSON de bytes | `git_named_queries_and_aliases_support_service_integration` |
+| Un documento que sigue en la nube no bloquea el inicio, no entra en la sesión hasta descargarse y no se pisa al integrar | `cloud_only_documents_wait_without_blocking_or_being_deleted` |
+| Un init que falla no deja historiales huérfanos en KN_HOME | `a_failed_init_leaves_no_orphan_history` |
 
 Toda corrección de pérdida de datos requiere una regresión con documentos temporales y un control explícito de qué archivos deben sobrevivir. Las limitaciones que no tienen una prueba aparecen en [SECURITY.md](SECURITY.md) y [ARCHITECTURE.md](ARCHITECTURE.md), no se presentan como garantías.

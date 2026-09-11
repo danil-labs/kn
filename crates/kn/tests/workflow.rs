@@ -22,9 +22,13 @@ impl Fixture {
         }
     }
     fn run(&self, path: &Path, args: &[&str], code: i32) -> Value {
+        self.run_env(path, args, code, &[])
+    }
+    fn run_env(&self, path: &Path, args: &[&str], code: i32, env: &[(&str, &str)]) -> Value {
         let out = Command::new(env!("CARGO_BIN_EXE_kn"))
             .current_dir(path)
             .env("KN_HOME", &self.home)
+            .envs(env.iter().copied())
             .args(args)
             .arg("--json")
             .output()
@@ -52,6 +56,74 @@ impl Fixture {
                 .unwrap(),
         )
     }
+}
+fn session_path(value: &Value) -> PathBuf {
+    PathBuf::from(value["data"]["path"].as_str().unwrap())
+}
+#[test]
+fn cloud_only_documents_wait_without_blocking_or_being_deleted() {
+    let f = Fixture::new();
+    let remoto = "anexos/[v2] informe final.pdf";
+    fs::write(f.main.join("acta.md"), "local\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(remoto), "contenido remoto\n").unwrap();
+    let nube = [("KN_TEST_CLOUD_ONLY", remoto)];
+
+    let init = f.run_env(&f.main, &["init"], 0, &nube);
+    assert_eq!(init["data"]["cloud_only"][0], remoto);
+    let status = f.run_env(&f.main, &["status"], 0, &nube);
+    assert_eq!(status["data"]["clean"], true);
+    assert_eq!(status["data"]["cloud_only"][0], remoto);
+
+    let choque = session_path(&f.run_env(&f.main, &["session", "start", "choque"], 0, &nube));
+    assert!(choque.join("acta.md").is_file());
+    assert!(
+        !choque.join(remoto).exists(),
+        "lo que sigue en la nube no entra en la sesión"
+    );
+    fs::create_dir_all(choque.join("anexos")).unwrap();
+    fs::write(choque.join(remoto), "del agente\n").unwrap();
+    f.run(&choque, &["snapshot"], 0);
+    f.run_env(&choque, &["session", "finish"], 2, &nube);
+    assert_eq!(
+        fs::read_to_string(f.main.join(remoto)).unwrap(),
+        "contenido remoto\n"
+    );
+
+    let agente = session_path(&f.run_env(&f.main, &["session", "start", "agente"], 0, &nube));
+    fs::write(agente.join("respuesta.md"), "del agente\n").unwrap();
+    f.run(&agente, &["snapshot"], 0);
+    f.run_env(&agente, &["session", "finish"], 0, &nube);
+    assert_eq!(
+        fs::read_to_string(f.main.join(remoto)).unwrap(),
+        "contenido remoto\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.main.join("respuesta.md")).unwrap(),
+        "del agente\n"
+    );
+
+    let descargado = f.session("descargado");
+    assert_eq!(
+        fs::read_to_string(descargado.join(remoto)).unwrap(),
+        "contenido remoto\n",
+        "ya descargado, la siguiente observación lo versiona"
+    );
+}
+#[cfg(unix)]
+#[test]
+fn a_failed_init_leaves_no_orphan_history() {
+    let f = Fixture::new();
+    std::os::unix::fs::symlink(f._tmp.path(), f.main.join("fuera")).unwrap();
+    f.run(&f.main, &["init"], 1);
+    let repos = f.home.join("repos");
+    assert!(
+        !repos.exists() || fs::read_dir(&repos).unwrap().next().is_none(),
+        "un init fallido no deja historial en KN_HOME"
+    );
+    fs::remove_file(f.main.join("fuera")).unwrap();
+    f.init();
+    assert_eq!(fs::read_dir(&repos).unwrap().count(), 1);
 }
 #[test]
 fn documents_sessions_restore_and_publish_locally() {

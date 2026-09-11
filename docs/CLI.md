@@ -82,6 +82,14 @@ Los códigos numéricos son de kn, no una reproducción exacta de los de Git. En
 | IO_ERROR | Falló filesystem/proceso |
 | INVALID_STATE | Estado JSON no se puede deserializar |
 
+## Documentos que siguen en la nube
+
+`init`, `status` y `worktree add` devuelven `cloud_only`: las rutas relativas, con `/`, de los documentos que el proveedor muestra pero todavía no descargó. En macOS se reconocen por `SF_DATALESS`; en Windows, por los atributos `OFFLINE`, `RECALL_ON_OPEN` o `RECALL_ON_DATA_ACCESS`. En Linux la lista siempre está vacía.
+
+Leer uno de esos documentos obligaría a descargarlo, y sin el cliente de sincronización la lectura se agota. Por eso Git no los lista ni los guarda: no aparecen en `local_changes`, `clean` no los cuenta y no entran en la versión ni en las sesiones. Cuando el proveedor los descarga, la siguiente observación los versiona. `worktree finish` nunca los pisa: si la sesión trae un documento en la misma ruta, devuelve CONFLICT.
+
+Límite sin prueba: un documento ya versionado que el proveedor reemplaza por otra versión sin descargarla todavía se lee al observarlo.
+
 ## Estado de integración
 
 `inspect --path <ruta> --json` es experimental y permanece oculto en la ayuda general. Puede devolver `managed=false`, o identificar documentos y su principal; su origen cloud y sharing son desconocidos. No es un clasificador universal ni sustituye las consultas anteriores. `workspace_id` identifica el historial local, no una cuenta, una persona ni un espacio cloud compartido.

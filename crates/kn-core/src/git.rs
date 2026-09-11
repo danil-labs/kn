@@ -67,6 +67,10 @@ impl Git {
     pub fn output(&self, args: &[&str]) -> Result<Output> {
         Ok(self.command()?.args(args).output()?)
     }
+    /// Como `run`, con configuración `-c` de esta llamada delante del subcomando.
+    pub fn run_with(&self, config: &[String], args: &[&str]) -> Result<Vec<u8>> {
+        checked(self.command()?.args(config).args(args).output()?)
+    }
     pub fn run_os(&self, args: &[&OsStr]) -> Result<Vec<u8>> {
         checked(self.command()?.args(args).output()?)
     }
