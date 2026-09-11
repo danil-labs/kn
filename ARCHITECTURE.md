@@ -18,7 +18,8 @@ flowchart LR
 | Componente | Responsabilidad | Fuente |
 | --- | --- | --- |
 | CLI | Parseo, alias, `-C`, salidas y exit codes | [main.rs](crates/kn/src/main.rs) |
-| Workspace | Descubrimiento de `.kn`, UUID, ubicación y locks | [workspace.rs](crates/kn-core/src/workspace.rs) |
+| Workspace | Descubrimiento, UUID, ubicación, locks y `migrate` | [workspace.rs](crates/kn-core/src/workspace.rs) |
+| Registro | Raíz canónica de cada principal → UUID, en KN_HOME | [registry.rs](crates/kn-core/src/registry.rs) |
 | Engine | Procesos Git con variables/configuración aisladas | [git.rs](crates/kn-core/src/git.rs) |
 | Operaciones | Status, diff, commit, log, restore | [ops.rs](crates/kn-core/src/ops.rs) |
 | Sesiones | Crear, actualizar e integrar worktrees | [sessions.rs](crates/kn-core/src/sessions.rs) |
@@ -33,21 +34,44 @@ Límite sin verificar: en macOS, `/usr/bin/git` es un lanzador de las Command Li
 
 | Ubicación | Contenido |
 | --- | --- |
-| `<principal>/.kn/config.json` | Schema 2, UUID local y rol de sesión |
-| `<principal>/.kn/kn.lock` | Lock de inicialización |
+| `$KN_HOME/roots.json` | Registro, schema 1: raíz canónica de cada principal → UUID. Es la fuente de su identidad |
+| `$KN_HOME/roots.lock` | Coordina las escrituras del registro |
+| `$KN_HOME/locks/<hash>.lock` | Lock de inicialización de una raíz; el nombre es el FNV-1a de su ruta canónica |
 | `$KN_HOME/repos/<uuid>/` | Objetos, referencias, índice principal y registros Git de worktrees |
 | `$KN_HOME/repos/<uuid>/location.json` | Última ubicación registrada de la principal |
 | `$KN_HOME/repos/<uuid>/kn.lock` | Coordinación de operaciones kn del espacio |
 | `$KN_HOME/repos/<uuid>/cloud-pending.json` | Documentos de la principal que seguían en la nube en su última versión |
-| `$KN_HOME/sessions/<uuid>/<nombre>/` | Documentos de sesión, gitfile y configuración `.kn` local |
+| `$KN_HOME/sessions/<uuid>/<nombre>/` | Documentos de sesión, gitfile y marcador `.kn/config.json` (schema 2, UUID y nombre de sesión) |
+| `<principal>/.kn/config.json`, `<principal>/.kn/kn.lock` | Solo en principales inicializadas antes del registro; `kn migrate` los quita |
 
-KN_HOME usa `~/.kn` por defecto (USERPROFILE en Windows). La principal no recibe un `.git` de kn. Los archivos `.git` existentes del usuario se conservan. Los datos de motor y las sesiones deben estar fuera de carpetas sincronizadas; la comprobación actual solo rechaza KN_HOME dentro de la principal, no detecta todos los proveedores del sistema.
+KN_HOME usa `~/.kn` por defecto (USERPROFILE en Windows). La principal no recibe ningún archivo de kn: ni `.git`, ni `.kn`, ni locks. Los archivos `.git` existentes del usuario se conservan. Los datos de motor y las sesiones deben estar fuera de carpetas sincronizadas; la comprobación actual solo rechaza KN_HOME dentro de la principal y la principal dentro de KN_HOME, no detecta todos los proveedores del sistema.
 
-El UUID es local, no una identidad cloud compartida. Copiar `.kn/config.json` no copia el historial. La configuración usa escritura temporal y rename; esto no hace atómico todo un commit o checkout. Git sigue siendo la fuente de HEAD: no se duplica su valor en un state.json.
+El UUID es local, no una identidad cloud compartida. El registro, la ubicación y los marcadores de sesión usan escritura temporal y rename; esto no hace atómico todo un commit o checkout. Git sigue siendo la fuente de HEAD: no se duplica su valor en un state.json.
+
+## Identidad de una carpeta
+
+La identidad de una principal vive en `$KN_HOME/roots.json`, por su ruta canónica, y no dentro de la carpeta. Así una carpeta de Drive u OneDrive no lleva nada de kn a otras máquinas, y cada máquina que la inicializa tiene su propio historial. La identidad no se deduce de `repos/*/location.json`, porque varios historiales pueden apuntar a la misma raíz: los que dejó un init fallido y el anterior a `init --fresh`. `location.json` sigue guardando dónde está la principal de cada historial; es como una sesión la encuentra.
+
+Para descubrir la carpeta, kn sube desde el directorio de trabajo y se queda con la más cercana que cumpla una de estas condiciones, en este orden:
+
+1. Está registrada en `roots.json`: es una principal. kn no lee su `.kn`, que puede haber llegado por sincronización.
+2. Tiene `.kn/config.json` con `session`: es una sesión. Las sesiones viven en `$KN_HOME/sessions` y conservan su marcador.
+3. Tiene `.kn/config.json` sin `session`: es una principal inicializada antes del registro.
+
+El descubrimiento se detiene en una carpeta con `.git`. El registro nunca contiene una sesión: `init` rechaza las carpetas dentro de una sesión o de KN_HOME.
+
+Una principal registrada dentro de otra tiene su propio historial. La de arriba versiona los documentos de la de abajo como cualquier otro, así que lo que integra una sesión de abajo le llega como `external_observation`, como un repositorio Git anidado visto desde fuera.
+
+Una principal con marcador anterior sigue funcionando. Las operaciones que escriben en su historial (`init`, `worktree add`, `worktree update` y `worktree finish`) la registran sin tocar el marcador; las lecturas no escriben. `commit` y `restore` en una sesión no consultan la principal y no la registran. `kn migrate` la registra y quita `.kn`. Si el historial que nombra un marcador no está en esta máquina, el marcador llegó por sincronización: `init` registra una identidad nueva y lo deja intacto.
+
+Límites:
+
+- Mover o renombrar una principal registrada la deja sin identidad: en la nueva ruta es `NOT_A_WORKSPACE`, e `init` allí empieza otro historial. El anterior queda en KN_HOME sin referencia, igual que tras `init --fresh`; kn no lo borra.
+- El registro asocia rutas, no contenido: otra carpeta creada en una ruta registrada se trata como esa principal, y sus diferencias se registran como cambios externos.
 
 ## Flujo de edición
 
-1. `init` captura los documentos iniciales. Un commit vacío interno permite abrir worktrees incluso si no hay documentos.
+1. `init` registra la raíz en `roots.json` y captura los documentos iniciales. Un commit vacío interno permite abrir worktrees incluso si no hay documentos.
 2. `worktree add` observa cambios manuales de la principal, registra una referencia `external_observation` y crea la sesión desde main.
 3. `commit` registra una versión con los documentos permitidos de la sesión. `log` omite versiones sin cambios documentales.
 4. `worktree update` observa de nuevo la principal y usa merge de Git dentro de la sesión. Los conflictos permanecen ahí.

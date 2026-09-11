@@ -32,11 +32,13 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: std::path::PathBuf,
     },
-    /// Inicializar historial externo; no crea .git en la carpeta principal
+    /// Inicializar historial externo; no escribe nada en la carpeta principal
     Init {
         #[arg(long)]
         fresh: bool,
     },
+    /// Pasar la identidad de una carpeta con .kn al registro de KN_HOME y quitar su .kn
+    Migrate,
     /// Consultar cambios sin modificar documentos
     Status {
         #[arg(long, conflicts_with = "porcelain")]
@@ -196,9 +198,11 @@ fn execute(cli: &Cli) -> Result<Value> {
             *max_bytes,
         );
     }
+    if let Commands::Migrate = cli.command {
+        return workspace::migrate(&cwd);
+    }
     if let Commands::Init { fresh } = cli.command {
-        let already = cwd.join(".kn/config.json").exists() && !fresh;
-        let ws = workspace::initialize(&cwd, fresh)?;
+        let (ws, already) = workspace::initialize(&cwd, fresh)?;
         let cloud_only = kn_core::cloud::pending(&ws.git.root)?;
         return Ok(
             json!({"workspace_id": ws.config.workspace_id, "root": ws.git.root,
@@ -266,6 +270,11 @@ fn human(data: &Value) {
     if let Some(items) = data["unsafe_paths"].as_array() {
         for item in items {
             println!("Enlace absoluto, externo o roto: {item}");
+        }
+    }
+    if let Some(items) = data["removed"].as_array() {
+        for item in items {
+            println!("Quitado: {}", item.as_str().unwrap_or(""));
         }
     }
     if data["existing_user_git"] == true {

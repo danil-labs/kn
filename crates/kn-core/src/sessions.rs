@@ -10,7 +10,7 @@ use std::fs;
 pub fn start(ws: &Workspace, name: &str) -> Result<Value> {
     validate_name(name)?;
     ws.claim()?;
-    let main = ws.primary()?;
+    let main = ws.primary_for_write()?;
     let dir = ws
         .home
         .join("sessions")
@@ -92,7 +92,7 @@ pub fn update(ws: &Workspace) -> Result<Value> {
             "Hay una integración pendiente en esta sesión.".into(),
         ));
     }
-    observe_external(&ws.primary()?)?;
+    observe_external(&ws.primary_for_write()?)?;
     let out = ws.git.output(&[
         "merge",
         "--no-overwrite-ignore",
@@ -123,7 +123,7 @@ pub fn finish(ws: &Workspace) -> Result<Value> {
     // Para quien trabaja en documentos, integrar es guardar: lo pendiente se registra aquí.
     let (_, registrados, _) =
         ops::commit(&ws.git, "Versión antes de integrar", "pre_finish_snapshot")?;
-    let main = ws.primary()?;
+    let main = ws.primary_for_write()?;
     observe_external(&main)?;
     let tip = ws.git.head()?;
     let old = main.head()?;

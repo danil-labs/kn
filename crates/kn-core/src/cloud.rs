@@ -111,8 +111,10 @@ pub fn fetch(start: &Path, timeout: Duration, max_bytes: Option<u64>) -> Result<
     let mut bytes_fetched: u64 = 0;
     let mut spent: u64 = 0;
     for (size, rel) in queue {
+        // Con presupuesto cero no se lee nada: abrir un documento de tamaño aparente
+        // cero también pide su descarga al proveedor.
         if !skipped_budget.is_empty()
-            || max_bytes.is_some_and(|max| spent.saturating_add(size) > max)
+            || max_bytes.is_some_and(|max| max == 0 || spent.saturating_add(size) > max)
         {
             skipped_budget.push(rel);
             continue;
