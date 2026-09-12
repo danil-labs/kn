@@ -1,6 +1,6 @@
 [package]
 publish = false
-repository = "https://github.com/soydanil/kn"
+repository = "https://github.com/danil-labs/kn"
 description = "CLI de documentos con sesiones de agentes y Git externo"
 name = "kn"
 version.workspace = true

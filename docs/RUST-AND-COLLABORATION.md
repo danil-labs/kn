@@ -1,6 +1,6 @@
 # Rust, sesiones y colaboración
 
-Evaluación: 2026-09-10. Fuentes de producto: solicitud del usuario en esta sesión, incluida la restricción de no sincronizar archivos Git y la pregunta sobre colaboración. Referencia existente: [issue #2](https://github.com/soydanil/kn/issues/2) y [PR #1](https://github.com/soydanil/kn/pull/1), revisado en `2e2189724fc48c5d190793b8e75a6ae0f49cc936`. La propuesta Go permanece intacta en su rama; este documento registra las diferencias, sin reescribir su entrega histórica.
+Evaluación: 2026-09-10. Fuentes de producto: solicitud del usuario en esta sesión, incluida la restricción de no sincronizar archivos Git y la pregunta sobre colaboración. Referencia existente: [issue #2](https://github.com/danil-labs/kn/issues/2) y [PR #1](https://github.com/danil-labs/kn/pull/1), revisado en `2e2189724fc48c5d190793b8e75a6ae0f49cc936`. La propuesta Go permanece intacta en su rama; este documento registra las diferencias, sin reescribir su entrega histórica.
 
 ## Aclaración de producto: agentes sobre una carpeta de uso libre
 
@@ -22,10 +22,10 @@ Hallazgos leídos en el PR:
 
 | Evidencia fijada al commit | Resultado | Tratamiento en Rust |
 | --- | --- | --- |
-| [versions.go:189](https://github.com/soydanil/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/versions.go#L189) | Barre todos los archivos ausentes del árbol, incluyendo ignorados y archivos de `.git`; parsea nombres citados como si fueran rutas reales | Restauración mediante checkout de dos árboles de Git, con preversión; regresión con Unicode, ignorados y gitfile |
-| [git.go:18](https://github.com/soydanil/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/git.go#L18) | Hereda configuración y variables Git del proceso | Un solo runner aislado, sin hooks, firma ni filtros de contenido |
-| [ops.go](https://github.com/soydanil/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/ops.go#L277) funciones Status y Diff | Escribe marcadores durante consultas | Consultas sin modificar documentos; carpetas vacías informativas |
-| [config.go](https://github.com/soydanil/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/workspace/config.go#L92) funciones LoadConfig y SaveState | Identidad local mezclada con ubicación absoluta y estado de HEAD duplicado | Descubrimiento de raíz, registro externo de ubicación y HEAD leído de Git |
+| [versions.go:189](https://github.com/danil-labs/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/versions.go#L189) | Barre todos los archivos ausentes del árbol, incluyendo ignorados y archivos de `.git`; parsea nombres citados como si fueran rutas reales | Restauración mediante checkout de dos árboles de Git, con preversión; regresión con Unicode, ignorados y gitfile |
+| [git.go:18](https://github.com/danil-labs/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/git.go#L18) | Hereda configuración y variables Git del proceso | Un solo runner aislado, sin hooks, firma ni filtros de contenido |
+| [ops.go](https://github.com/danil-labs/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/engine/ops.go#L277) funciones Status y Diff | Escribe marcadores durante consultas | Consultas sin modificar documentos; carpetas vacías informativas |
+| [config.go](https://github.com/danil-labs/kn/blob/2e2189724fc48c5d190793b8e75a6ae0f49cc936/internal/workspace/config.go#L92) funciones LoadConfig y SaveState | Identidad local mezclada con ubicación absoluta y estado de HEAD duplicado | Descubrimiento de raíz, registro externo de ubicación y HEAD leído de Git |
 
 El flujo de una sola carpeta del PR no expresa las sesiones del producto solicitado. El nuevo núcleo usa `git worktree add`, snapshots como commits y avance de la principal solo cuando es fast-forward. Cuando la principal diverge, la sesión incorpora sus cambios con `git merge`; no hay algoritmo propio de merge. [Semántica oficial de worktrees](https://git-scm.com/docs/git-worktree).
 
