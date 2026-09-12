@@ -24,6 +24,7 @@
 - `kn cloud fetch --all` sigue por tandas hasta que no queda nada que intentar, con `--max-bytes` como tope total. `--progress` escribe en stderr una línea JSON por documento; stdout conserva el único envelope. Así una aplicación puede lanzar la descarga en segundo plano y mostrar el avance sin reimplementarla.
 - Las descargas que fallan se recuerdan en `cloud-pending.json` (schema 2, `failed: [{path, reason, at}]`) y las siguientes las omiten salvo con `--retry-failed`. `status` devuelve `cloud_failed` y `cloud_only_bytes`.
 - Dos `cloud fetch` del mismo historial no corren a la vez: la segunda termina con `CLOUD_FETCH_BUSY`.
+- README documenta que `kn-core` se puede usar directamente como librería desde otra aplicación Rust, sin pasar por `kn` como subproceso ni por su salida `--json` (véase «Usar kn-core como librería»).
 
 ### Límites de compatibilidad
 

@@ -67,6 +67,29 @@ kn elige el ejecutable una vez por proceso, en este orden:
 
 `init` comprueba Git antes de crear KN_HOME. kn no instala Git. Una aplicación que empaqueta su propio git, como Terminus, lo pasa en KN_GIT.
 
+## Usar kn-core como librería
+
+`kn` (`crates/kn`) es un cascarón de línea de comandos sobre `kn-core`
+(`crates/kn-core`): parsea argumentos con clap y nada más. `kn-core` no
+depende de ese proceso — no imprime, no llama `process::exit` ni lee
+argumentos de la línea de comandos —, así que una aplicación Rust que ya
+administra sus propias sesiones puede depender de `kn-core` directamente y
+llamar sus funciones (`workspace::Workspace::open`, `ops::status`,
+`ops::diff`, `ops::commit`, `sessions::*`) en su propio proceso, sin lanzar
+`kn` como subproceso ni parsear su salida `--json`. El `Envelope` de
+[error.rs](crates/kn-core/src/error.rs) es el mismo contrato, ya como valor
+Rust en vez de texto.
+
+Quien embeba `kn-core` hereda la resolución de Git de la sección anterior tal
+cual es: una sola vez por proceso. Hay que fijar `KN_GIT` antes de la primera
+llamada a `kn-core`, no antes de cada una — una aplicación que empaqueta su
+propio git, como Terminus, la define una vez al arrancar.
+
+Esto no cambia el contrato del CLI ni resuelve la distribución de `kn` como
+binario aparte para quien sí necesita invocarlo como programa externo (véase
+el issue #14): es la otra vía, para quien construye directamente sobre
+`kn-core` en Rust.
+
 ## Alcance y verificación
 
 Requiere Rust 1.89+ y Git (véase la sección anterior). Se verifica localmente con:
