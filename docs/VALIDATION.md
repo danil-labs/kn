@@ -17,7 +17,7 @@ Evaluación local: 2026-09-10, macOS ARM64, Rust 1.96.0. Alcance: núcleo local 
 | Fallos de disco y escrituras simultáneas de editores externos | No comprobado | [límites](../SECURITY.md) |
 | Integración end-to-end de Terminus | No comprobada | [contrato](CLI.md) |
 | MSRV 1.89 | Declarado; validación local ejecutada con Rust 1.96, no con 1.89 | [Cargo.toml](../Cargo.toml) |
-| Distribución con checksums e importación de Go | Pendiente | [issue #2](https://github.com/soydanil/kn/issues/2) |
+| Distribución con checksums e importación de Go | Pendiente | [issue #2](https://github.com/danil-labs/kn/issues/2) |
 
 Los checks del PR son la evidencia remota del commit revisado. No se considera terminada una integración por tener CI configurada. La propuesta Go permanece como referencia histórica y no es el motor de esta entrega.
 

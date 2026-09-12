@@ -1,6 +1,6 @@
 [package]
 publish = false
-repository = "https://github.com/soydanil/kn"
+repository = "https://github.com/danil-labs/kn"
 description = "Núcleo local de versiones y worktrees para kn"
 name = "kn-core"
 version.workspace = true
