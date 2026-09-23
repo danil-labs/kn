@@ -28,6 +28,7 @@ Estas propiedades se comprueban con [workflow.rs](crates/kn/tests/workflow.rs), 
 | Un init que falla no deja historiales huérfanos en KN_HOME | `a_failed_init_leaves_no_orphan_history` |
 | Integrar registra antes lo pendiente de la sesión | `finish_records_pending_edits_before_integrating` |
 | KN_GIT gana sobre PATH; si es inválida, falla con GIT_MISSING sin caer a PATH; sin Git, init no crea KN_HOME ni escribe en la carpeta | `git_resolution_follows_kn_git_and_reports_missing_git` |
+| Un documento versionado que el proveedor liberó no se lee: status, observaciones y sesiones siguen, cuenta como sin cambios hasta descargarse y una edición hecha en la nube aparece al descargarlo | `versioned_documents_freed_by_the_cloud_are_not_read` |
 | `status` informa lo descargado desde la última observación sin escribir el registro, que vive en KN_HOME | `cloud_downloads_are_reported_without_writing` |
 | Lo descargado de la nube queda en su propia versión `cloud_download`, separada de los cambios manuales; una sesión no escribe el registro | `cloud_downloads_have_their_own_version` |
 | `cloud fetch` lee los pendientes de la principal, respeta `--max-bytes` y no crea versiones | `cloud_fetch_reads_pending_documents_without_versions` |

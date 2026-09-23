@@ -1,8 +1,9 @@
 use crate::error::{Error, Result};
 use std::{
     ffi::{OsStr, OsString},
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::OnceLock,
 };
 
@@ -163,6 +164,34 @@ impl Git {
     /// Como `run`, con configuración `-c` de esta llamada delante del subcomando.
     pub fn run_with(&self, config: &[String], args: &[&str]) -> Result<Vec<u8>> {
         checked(self.command()?.args(config).args(args).output()?)
+    }
+    /// Como `run`, sobre `index` en vez del índice propio y con `input` en stdin.
+    pub fn run_on(&self, index: Option<&Path>, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
+        let mut cmd = self.command()?;
+        if let Some(index) = index {
+            cmd.env("GIT_INDEX_FILE", git_path(index)?);
+        }
+        let mut child = cmd
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        // Git lee stdin entero antes de escribir; basta cerrarlo al terminar. Si Git
+        // termina antes de leerlo, su stderr explica el fallo mejor que la tubería rota.
+        let written = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Git("Git no abrió stdin.".into()))?
+            .write_all(input);
+        if let Err(e) = written
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(e.into());
+        }
+        checked(child.wait_with_output()?)
     }
     pub fn run_os(&self, args: &[&OsStr]) -> Result<Vec<u8>> {
         checked(self.command()?.args(args).output()?)

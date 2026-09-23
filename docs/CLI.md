@@ -135,13 +135,20 @@ Si `.kn` contiene cualquier otro archivo, o un marcador de otro historial, devue
 
 ## Documentos que siguen en la nube
 
-`init`, `status` y `worktree add` devuelven `cloud_only`: las rutas relativas, con `/`, de los documentos que el proveedor muestra pero todavía no descargó. En macOS se reconocen por `SF_DATALESS`; en Windows, por los atributos `OFFLINE`, `RECALL_ON_OPEN` o `RECALL_ON_DATA_ACCESS`. En Linux la lista siempre está vacía.
+`init`, `status` y `worktree add` devuelven `cloud_only`: las rutas relativas, con `/`, de los documentos que el proveedor muestra pero todavía no descargó, versionados o no. En macOS se reconocen por `SF_DATALESS`; en Windows, por los atributos `OFFLINE`, `RECALL_ON_OPEN` o `RECALL_ON_DATA_ACCESS`. En Linux la lista siempre está vacía.
 
 `status` también devuelve `cloud_only_bytes`, la suma del tamaño lógico de esos documentos, y `cloud_failed`, los de `cloud_only` cuya última descarga falló. El tamaño sale de los metadatos: leerlo no pide la descarga. En una sesión `cloud_failed` siempre está vacía.
 
-Leer uno de esos documentos obligaría a descargarlo, y sin el cliente de sincronización la lectura se agota. Por eso Git no los lista ni los guarda: no aparecen en `local_changes`, `clean` no los cuenta y no entran en la versión ni en las sesiones. Cuando el proveedor los descarga, la siguiente observación los versiona. `worktree finish` nunca los pisa: si la sesión trae un documento en la misma ruta, devuelve CONFLICT.
+En una sesión, `status` devuelve además `primary_cloud_only` y `primary_cloud_only_bytes`: lo mismo para la principal, porque el agente trabaja en la sesión y ahí `cloud_only` queda vacía. Son `null` en la principal y si la principal no se encuentra.
 
-Límite sin prueba: un documento ya versionado que el proveedor reemplaza por otra versión sin descargarla todavía se lee al observarlo.
+Leer uno de esos documentos obligaría a descargarlo, y sin el cliente de sincronización la lectura se agota. Por eso Git no los lee:
+
+- Uno sin versionar no aparece en `local_changes`, `clean` no lo cuenta y no entra en la versión ni en las sesiones. Cuando el proveedor lo descarga, la siguiente observación lo versiona.
+- Uno ya versionado que el proveedor liberó cuenta como sin cambios: su contenido ya está en el historial y las sesiones lo reciben completo desde ahí. Cuando se descarga, Git lo compara: si es igual a su versión no hay cambio; si alguien lo editó en la nube, aparece como `modified`. Límite: mientras siga en la nube, una edición hecha en la nube no se ve.
+
+`worktree finish` nunca los pisa: si la sesión trae un documento en la ruta de uno sin versionar, o cambia uno versionado que sigue en la nube, devuelve CONFLICT sin tocar la principal. Descargarlo con `cloud fetch` y volver a integrar lo resuelve.
+
+`status --porcelain` también trata como sin cambios los versionados que siguen en la nube; no oculta los nuevos, que Git lista sin leerlos.
 
 ### Lo descargado desde la última observación
 
