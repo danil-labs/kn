@@ -9,7 +9,7 @@
 
 use crate::{
     error::{Error, Result},
-    git::{Git, git_path},
+    git::{Git, git_path, nul_paths},
     ops::Change,
     workspace::{Workspace, acquire_lock, atomic_json},
 };
@@ -374,8 +374,13 @@ pub struct Hidden {
 }
 
 impl Hidden {
-    pub fn of(root: &Path) -> Result<Hidden> {
-        let paths = pending(root)?;
+    /// Los nuevos se ocultan con un `core.excludesFile` de esta llamada. Los ya
+    /// versionados, que los patrones de ignore no alcanzan, quedan marcados
+    /// `assume-unchanged` en el índice de `git`: ver `mark`.
+    pub fn of(git: &Git) -> Result<Hidden> {
+        let paths = pending(&git.root)?;
+        let (set, clear) = plan(git, None, &paths)?;
+        apply(git, None, &set, &clear)?;
         let excludes = if paths.is_empty() {
             None
         } else {
@@ -397,6 +402,81 @@ impl Hidden {
             ]),
         }
     }
+}
+
+/// Un índice temporal para lecturas con el lock compartido, que no pueden escribir
+/// el índice propio: la copia lleva las marcas de `mark` que a este le faltan.
+pub struct Overlay {
+    index: Option<tempfile::TempPath>,
+}
+
+impl Overlay {
+    pub fn of(git: &Git) -> Result<Overlay> {
+        let (set, clear) = plan(git, None, &pending(&git.root)?)?;
+        if set.is_empty() && clear.is_empty() {
+            return Ok(Overlay { index: None });
+        }
+        let index = tempfile::NamedTempFile::new()?.into_temp_path();
+        fs::copy(git.dir.join("index"), &index)?;
+        apply(git, Some(&index), &set, &clear)?;
+        Ok(Overlay { index: Some(index) })
+    }
+    /// El índice que deben usar las llamadas; `None` es el propio.
+    pub fn index(&self) -> Option<&Path> {
+        self.index.as_deref()
+    }
+}
+
+/// Un documento versionado que el proveedor liberó ya está entero en el historial,
+/// pero su ctime cambió y Git lo relee para indexarlo: con el proveedor sin
+/// entregarlo, la lectura se agota y falla toda la orden. Se marca
+/// `assume-unchanged` mientras siga en la nube: Git lo da por igual a HEAD sin
+/// leerlo en status, add, diff, commit ni merge. La marca vive en el índice, así
+/// que la respetan todas las órdenes sin repetir rutas en cada una; cada llamada
+/// la reconcilia con lo que hay en la nube y la quita en cuanto se descarga. Sin
+/// la marca Git compara el contenido: igual al versionado no es un cambio; editado
+/// en la nube, es una modificación normal.
+///
+/// Devuelve qué rutas marcar y cuáles desmarcar en `index` (el propio si es `None`).
+fn plan(git: &Git, index: Option<&Path>, pending: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+    let pending: BTreeSet<&str> = pending.iter().map(String::as_str).collect();
+    let listed = git.run_on(index, &["ls-files", "-v", "-z"], &[])?;
+    let (mut set, mut clear) = (vec![], vec![]);
+    for record in nul_paths(&listed)? {
+        // `-v` antepone una letra y un espacio; minúscula si tiene la marca.
+        let Some((tag, path)) = record.split_at_checked(2) else {
+            return Err(Error::Git("Listado del índice inválido.".into()));
+        };
+        // Un documento en conflicto no se marca: se resuelve con Git.
+        if tag.eq_ignore_ascii_case("m ") {
+            continue;
+        }
+        let marked = tag.starts_with(|c: char| c.is_ascii_lowercase());
+        match (pending.contains(path), marked) {
+            (true, false) => set.push(path.to_owned()),
+            (false, true) => clear.push(path.to_owned()),
+            _ => (),
+        }
+    }
+    Ok((set, clear))
+}
+
+fn apply(git: &Git, index: Option<&Path>, set: &[String], clear: &[String]) -> Result<()> {
+    for (flag, paths) in [
+        ("--assume-unchanged", set),
+        ("--no-assume-unchanged", clear),
+    ] {
+        if paths.is_empty() {
+            continue;
+        }
+        let mut input = vec![];
+        for path in paths {
+            input.extend_from_slice(path.as_bytes());
+            input.push(0);
+        }
+        git.run_on(index, &["update-index", flag, "-z", "--stdin"], &input)?;
+    }
+    Ok(())
 }
 
 /// El mensaje humano cuenta los documentos que quedaron fuera.

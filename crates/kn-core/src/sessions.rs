@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    git::{Engine, Git, git_path, version},
+    git::{Engine, Git, git_path, nul_paths, version},
     ops,
     workspace::{Config, Workspace, atomic_json, validate_name},
 };
@@ -133,6 +133,7 @@ pub fn finish(ws: &Workspace) -> Result<Value> {
         Some(1) => return Err(Error::Conflict("La principal avanzó. Ejecuta kn session update en esta sesión, revisa y vuelve a integrar.".into())),
         _ => return Err(Error::Git(String::from_utf8_lossy(&ancestry.stderr).into_owned())),
     }
+    unfetched_changes(&main, &old, &tip)?;
     ops::protect_untracked(&main, &tip)?;
     main.run(&["merge", "--no-overwrite-ignore", "--ff-only", &tip])?;
     Ok(
@@ -140,6 +141,27 @@ pub fn finish(ws: &Workspace) -> Result<Value> {
         "recorded_document_count": registrados,
         "message": "Versión integrada a la principal. La sesión se conserva; no se hizo ningún envío a la nube."}),
     )
+}
+/// Git no puede comprobar sin leerlo que un documento que sigue en la nube está
+/// igual a su versión, y no lo pisa: la integración espera a que se descargue.
+fn unfetched_changes(main: &Git, old: &str, tip: &str) -> Result<()> {
+    let cloud = crate::cloud::pending(&main.root)?;
+    if cloud.is_empty() {
+        return Ok(());
+    }
+    let touched =
+        nul_paths(&main.run(&["diff", "--name-only", "--no-renames", "-z", old, tip, "--"])?)?;
+    let blocked: Vec<String> = touched
+        .into_iter()
+        .filter(|path| cloud.binary_search(path).is_ok())
+        .collect();
+    if !blocked.is_empty() {
+        return Err(Error::Conflict(format!(
+            "La sesión cambia documentos que en la principal siguen en la nube: {}. Descárgalos con kn cloud fetch y vuelve a integrar; la principal no cambió.",
+            blocked.join(", ")
+        )));
+    }
+    Ok(())
 }
 fn require_clean(git: &Git) -> Result<()> {
     if !ops::changes(git)?.is_empty() {

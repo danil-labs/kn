@@ -459,7 +459,7 @@ fn record_initial(root: &Path, common: &Path) -> Result<()> {
         },
     )?;
     crate::ops::check_safe(&git)?;
-    let hidden = crate::cloud::Hidden::of(root)?;
+    let hidden = crate::cloud::Hidden::of(&git)?;
     git.run_with(&hidden.git_config()?, &["add", "-A", "--", "."])?;
     // Empty initial commit anchors worktrees; it is never exposed as a document version.
     git.run(&[

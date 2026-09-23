@@ -32,7 +32,10 @@ pub fn status(path: &Path, nul: bool) -> Result<Vec<u8>> {
     if nul {
         args.push("-z");
     }
-    ws.git.run(&args)
+    // Con el lock compartido no se escribe el índice: las marcas de lo versionado
+    // que sigue en la nube van en una copia.
+    let overlay = crate::cloud::Overlay::of(&ws.git)?;
+    ws.git.run_on(overlay.index(), &args, &[])
 }
 
 pub fn worktree_list(path: &Path, nul: bool) -> Result<Vec<u8>> {

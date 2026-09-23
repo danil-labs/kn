@@ -1765,3 +1765,119 @@ fn absolute_symlinks_cannot_escape_a_new_sessions_isolation() {
         "session only"
     );
 }
+/// Simula que el proveedor no entrega el documento: sin permiso de lectura, Git
+/// falla o lo reporta modificado si intenta leerlo. Cambia también el ctime, como
+/// al liberarlo. En Windows solo queda la simulación por nombre.
+fn unreadable(path: &Path, locked: bool) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if locked { 0o000 } else { 0o644 };
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = (path, locked);
+}
+fn porcelain(f: &Fixture, path: &Path, env: &[(&str, &str)]) -> Vec<u8> {
+    let out = Command::new(env!("CARGO_BIN_EXE_kn"))
+        .current_dir(path)
+        .env("KN_HOME", &f.home)
+        .envs(env.iter().copied())
+        .args(["status", "--porcelain", "-z"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+#[test]
+fn versioned_documents_freed_by_the_cloud_are_not_read() {
+    let f = Fixture::new();
+    let liberado = "anexos/informe final.md";
+    let contenido = "versionado completo\n";
+    fs::write(f.main.join("acta.md"), "uno\n").unwrap();
+    fs::create_dir(f.main.join("anexos")).unwrap();
+    fs::write(f.main.join(liberado), contenido).unwrap();
+    let init = f.init();
+
+    // El proveedor libera un documento que ya está en HEAD.
+    let nube = [(NUBE, liberado)];
+    let doc = f.main.join(liberado);
+    unreadable(&doc, true);
+    let status = f.run_env(&f.main, &["status"], 0, &nube)["data"].clone();
+    assert_eq!(status["clean"], true, "{status}");
+    assert_eq!(status["local_changes"], json!([]));
+    assert_eq!(status["cloud_only"], json!([liberado]));
+    assert_eq!(status["cloud_only_bytes"], contenido.len());
+    assert_eq!(status["primary_cloud_only"], Value::Null);
+    assert!(porcelain(&f, &f.main, &nube).is_empty());
+
+    // Observar, crear la sesión e integrar no lo leen; la sesión lo tiene completo.
+    fs::write(f.main.join("acta.md"), "dos\n").unwrap();
+    let added = f.run_env(&f.main, &["worktree", "add", "agente"], 0, &nube);
+    assert_eq!(added["data"]["cloud_only"], json!([liberado]));
+    let s = session_path(&added);
+    assert_eq!(fs::read_to_string(s.join(liberado)).unwrap(), contenido);
+    assert_eq!(fs::read_to_string(s.join("acta.md")).unwrap(), "dos\n");
+    let log = f.run(&s, &["log"], 0)["data"]["versions"].clone();
+    assert_eq!(log[0]["reason"], "external_observation");
+    assert_eq!(version_files(&f, &init, &log[0]["id"]), ["acta.md"]);
+
+    // La simulación va por nombre y alcanza también a la sesión; solo importa la principal.
+    let session = f.run_env(&s, &["status"], 0, &nube)["data"].clone();
+    assert_eq!(session["primary_cloud_only"], json!([liberado]));
+    assert_eq!(session["primary_cloud_only_bytes"], contenido.len());
+
+    fs::write(s.join("respuesta.md"), "del agente\n").unwrap();
+    f.run(&s, &["commit"], 0);
+    f.run_env(&s, &["worktree", "finish"], 0, &nube);
+    assert_eq!(
+        fs::read_to_string(f.main.join("respuesta.md")).unwrap(),
+        "del agente\n"
+    );
+    let otra = session_path(&f.run_env(&f.main, &["worktree", "add", "otra"], 0, &nube));
+    f.run_env(&f.main, &["init"], 0, &nube);
+    fs::write(f.main.join("acta.md"), "tres\n").unwrap();
+    f.run_env(&otra, &["worktree", "update"], 0, &nube);
+    assert_eq!(fs::read_to_string(otra.join("acta.md")).unwrap(), "tres\n");
+
+    // Pisarlo sin leerlo arriesgaría una edición en la nube: la integración espera.
+    fs::write(otra.join(liberado), "del agente\n").unwrap();
+    f.run(&otra, &["commit"], 0);
+    let blocked = f.run_env(&otra, &["worktree", "finish"], 2, &nube);
+    assert!(
+        blocked["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(liberado),
+        "{blocked}"
+    );
+
+    // Descargado igual al versionado: no es un cambio.
+    unreadable(&doc, false);
+    let status = f.run(&f.main, &["status"], 0)["data"].clone();
+    assert_eq!(status["clean"], true, "{status}");
+    assert_eq!(status["cloud_only"], json!([]));
+    assert_eq!(fs::read_to_string(&doc).unwrap(), contenido);
+
+    // Editado en la nube mientras seguía liberado: al descargarse, cambio normal.
+    fs::write(&doc, "editado en la nube\n").unwrap();
+    unreadable(&doc, true);
+    assert_eq!(
+        f.run_env(&f.main, &["status"], 0, &nube)["data"]["clean"],
+        true
+    );
+    unreadable(&doc, false);
+    let status = f.run(&f.main, &["status"], 0)["data"].clone();
+    assert_eq!(
+        status["local_changes"],
+        json!([{"path": liberado, "kind": "modified", "status": " M"}])
+    );
+
+    // cloud fetch también lo descarga.
+    let fetched = f.run_env(&f.main, &["cloud", "fetch", "--all"], 0, &nube)["data"].clone();
+    assert_eq!(fetched["fetched"], json!([liberado]));
+}

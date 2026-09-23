@@ -15,7 +15,7 @@ pub struct Change {
 }
 
 pub fn changes(git: &Git) -> Result<Vec<Change>> {
-    let hidden = crate::cloud::Hidden::of(&git.root)?;
+    let hidden = crate::cloud::Hidden::of(git)?;
     let out = git.run_with(
         &hidden.git_config()?,
         &[
@@ -125,6 +125,23 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         .fold(0_u64, |total, (_, size)| total.saturating_add(*size));
     let cloud_only: Vec<String> = sized.into_iter().map(|(rel, _)| rel).collect();
     let cloud_failed = crate::cloud::failed(&ws.git, &cloud_only)?;
+    // El agente trabaja en la sesión, que no tiene documentos en la nube: le importa
+    // lo que falta en la principal. `null` en la principal o si no se encuentra.
+    let primary_cloud = match ws.config.session {
+        Some(_) => match ws.primary() {
+            Ok(main) => Some(crate::cloud::pending_sized(&main.root)?),
+            Err(_) => None,
+        },
+        None => None,
+    };
+    let primary_cloud_only_bytes = primary_cloud.as_ref().map(|sized| {
+        sized
+            .iter()
+            .fold(0_u64, |total, (_, size)| total.saturating_add(*size))
+    });
+    let primary_cloud_only: Option<Vec<&str>> = primary_cloud
+        .as_ref()
+        .map(|sized| sized.iter().map(|(rel, _)| rel.as_str()).collect());
     let downloaded = crate::cloud::downloaded(&ws.git, &local)?;
     let mut unsafe_paths = vec![];
     let mut empty = vec![];
@@ -133,7 +150,7 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         &ws.git
             .run(&["diff", "--name-only", "--diff-filter=U", "-z"])?,
     )?;
-    let message = crate::cloud::with_downloads(
+    let mut message = crate::cloud::with_downloads(
         &crate::cloud::with_notice(
             if ws.config.session.is_some() {
                 "Sesión local; los cambios todavía no se publican."
@@ -144,10 +161,17 @@ pub fn status(ws: &Workspace) -> Result<Value> {
         ),
         &downloaded,
     );
+    if let Some(n) = primary_cloud_only.as_ref().map(Vec::len).filter(|n| *n > 0) {
+        message = format!(
+            "{message} {n} documento(s) de la principal siguen en la nube; los ya versionados están completos en la sesión."
+        );
+    }
     Ok(
         json!({"workspace_id": ws.config.workspace_id, "session": ws.config.session,
         "clean": local.is_empty(), "local_changes": local, "cloud_only": cloud_only,
         "cloud_only_bytes": cloud_only_bytes, "cloud_failed": cloud_failed,
+        "primary_cloud_only": primary_cloud_only,
+        "primary_cloud_only_bytes": primary_cloud_only_bytes,
         "downloaded_since_last_observation": downloaded,
         "pending_sync": [], "conflicts": conflicts,
         "unsafe_paths": unsafe_paths, "unversioned_empty_folders": empty,
@@ -193,7 +217,7 @@ pub fn commit(git: &Git, message: &str, reason: &str) -> Result<(String, usize, 
                 .into(),
         ));
     }
-    let hidden = crate::cloud::Hidden::of(&git.root)?;
+    let hidden = crate::cloud::Hidden::of(git)?;
     git.run_with(&hidden.git_config()?, &["add", "-A", "--", "."])?;
     let count =
         nul_paths(&git.run(&["diff", "--cached", "--name-only", "-z", "HEAD", "--"])?)?.len();
