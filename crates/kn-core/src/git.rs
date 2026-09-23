@@ -184,14 +184,14 @@ impl Git {
             .take()
             .ok_or_else(|| Error::Git("Git no abrió stdin.".into()))?
             .write_all(input);
-        match written {
-            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
-                child.kill().ok();
-                child.wait().ok();
-                return Err(e.into());
-            }
-            _ => checked(child.wait_with_output()?),
+        if let Err(e) = written
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(e.into());
         }
+        checked(child.wait_with_output()?)
     }
     pub fn run_os(&self, args: &[&OsStr]) -> Result<Vec<u8>> {
         checked(self.command()?.args(args).output()?)
