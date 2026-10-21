@@ -156,6 +156,10 @@ impl Git {
                 "core.hooksPath={}",
                 git_path(&self.common.join("disabled-hooks"))?
             ));
+        // Git para Windows no pasa de 260 caracteres sin esto, y la config global queda fuera.
+        if cfg!(windows) {
+            cmd.args(["-c", "core.longpaths=true"]);
+        }
         Ok(cmd)
     }
     pub fn output(&self, args: &[&str]) -> Result<Output> {

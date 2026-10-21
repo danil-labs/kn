@@ -591,6 +591,23 @@ fn copies_moves_locks_and_invalid_input() {
         "WORKSPACE_BUSY"
     );
 }
+#[cfg(windows)]
+#[test]
+fn documents_beyond_windows_max_path_are_versioned() {
+    let f = Fixture::new();
+    let mut dir = f.main.clone();
+    for _ in 0..6 {
+        dir.push("carpeta con un nombre bastante largo para Windows");
+    }
+    fs::create_dir_all(&dir).unwrap();
+    let document = dir.join("documento con un nombre también largo.txt");
+    fs::write(&document, "hola").unwrap();
+    assert!(document.as_os_str().len() > 260);
+    f.init();
+    let session = f.session("larga");
+    let copied = session.join(document.strip_prefix(&f.main).unwrap());
+    assert_eq!(fs::read_to_string(copied).unwrap(), "hola");
+}
 #[test]
 fn global_git_configuration_is_isolated() {
     let f = Fixture::new();
